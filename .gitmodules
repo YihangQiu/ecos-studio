@@ -9,4 +9,4 @@
 	url = git@github.com:openecos-projects/ecc.git
 [submodule "pdk/icsprout55-pdk"]
 	path = pdk/icsprout55-pdk
-	url = git@github.com:openecos-projects/icsprout55-pdk.git
+	url = git@github.com:0xharry/icsprout55-pdk.git

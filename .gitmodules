@@ -1,0 +1,12 @@
+[submodule "ip/SoCExamples"]
+	path = ip/SoCExamples
+	url = git@github.com:Emin017/SoCExamples.git
+[submodule "ip/retroSoC"]
+	path = ip/retroSoC
+	url = git@github.com:retroSoC/retroSoC.git
+[submodule "eda/ecc"]
+	path = eda/ecc
+	url = git@github.com:openecos-projects/ecc.git
+[submodule "pdk/icsprout55-pdk"]
+	path = pdk/icsprout55-pdk
+	url = git@github.com:openecos-projects/icsprout55-pdk.git

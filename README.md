@@ -29,5 +29,34 @@ Enabling mainstream manufacturing processes.
 
 ## Quick Start
 
-*(This section is reserved for upcoming quick start instructions and usage guides.)*
+Run from the repository root:
+
+```bash
+# 1) Initialize submodules, setup ICsprout55 PDK assets, and build ECC CLI
+make setup
+
+# 2) Run ECC CLI flow for the GCD demo
+make demo-gcd
+
+# 3) Run ECC CLI flow for the SoC example (filelist mode)
+make demo-soc
+
+# (Optional) Verify in a clean Docker environment
+# gcd only
+make docker-verify
+
+# soc only
+make docker-verify-soc
+
+# full (gcd + soc)
+make docker-verify-all
+```
+
+The CLI demos follow ECC's CLI Flow Runner usage (`nix run .#cli -- ...` style):
+- [ECC CLI Flow Runner](eda/ecc/README.md#cli-flow-runner)
+
+For GUI usage and more advanced flows/features, refer to ECC documentation:
+- [ECC Quick Start (Desktop Application)](eda/ecc/README.md#quick-start)
+- [ECC User Guide](eda/ecc/docs/user-guide.md)
+- [ECC Documentation Index](eda/ecc/docs/index.md)
 

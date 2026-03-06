@@ -35,6 +35,13 @@ Enabling mainstream manufacturing processes.
 
 ## Quick Start
 
+### Prerequisites
+
+```bash
+# Initialize git submodules (IP libraries, EDA tools, PDK)
+git submodule update --init --recursive
+```
+
 ### GUI Application
 
 ```bash

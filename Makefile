@@ -26,12 +26,13 @@ help:
 setup:
 	git submodule update --init --recursive
 	$(MAKE) -C pdk/icsprout55-pdk unzip
+	cd ecc && uv sync --all-groups --python 3.11
 
 build:
 	bazel build //:ecos_studio_bundle
 
 dev:
-	cd ecos/server && uv sync
+	cd ecos/server && uv sync --all-groups --python 3.11
 	cd ecos/gui && pnpm install
 
 $(BUNDLE_TAR):
@@ -77,10 +78,4 @@ demo-retrosoc:
 		--rtl $(RETROSOC_WS)/retrosoc.f \
 		--design retrosoc_asic --top retrosoc_asic --clock extclk_i_pad \
 		--pdk-root $(PDK_ROOT)
-
-docker-build:
-	docker build --no-cache -f Dockerfile.verify -t ecos-studio-verify:latest .
-
-docker-verify-all:
-	RUN_GCD=1 RUN_SOC=1 RUN_RETROSOC=1 bash ./scripts/verify-demos-in-docker.sh
 

@@ -12,9 +12,10 @@ This repository is organized into four main components:
 
 ### 1. GUI Application (`ecos/`)
 Desktop application providing an integrated development environment for chip design.
-- **Frontend**: Vue 3 + Tauri
-- **Backend**: FastAPI server (`ecos_server` package)
-- See [ecos/README.md](ecos/README.md) for development setup
+- **Visual Workspace Management** - Create and manage chip design projects
+- **Automated RTL-to-GDS Flow** - One-click execution from Verilog to layout
+- **Integrated Tools** - Yosys (synthesis), ECC-Tools (placement & routing), KLayout (visualization)
+- See [ecos/README.md](ecos/README.md) for usage guide
 
 ### 2. Open Source IP (`ip/`)
 Pre-verified infrastructure for composable design, including configurable SoC templates and common peripherals.

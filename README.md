@@ -76,18 +76,6 @@ make dev
 make build
 ```
 
-### Docker Verification
-
-Verify demos in a clean Docker environment:
-
-```bash
-# Build verification image
-make docker-build
-
-# Run all demos
-make docker-verify-all
-```
-
 ## Documentation
 
 - [ECOS GUI Development](ecos/README.md)

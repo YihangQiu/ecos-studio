@@ -29,13 +29,12 @@ setup:
 	cd ecc && SKIP_VENV=1 bazel run //:prepare_dev
 
 dev:
-	cd ecos/server && uv sync --all-groups --python 3.11
-	cd ecos/gui && pnpm install
+	@cd ecos/server && uv sync --all-groups --python 3.11
+	@cd ecos/gui && pnpm install
 
 $(BUNDLE_TAR):
-	cd ecos/server && uv sync --frozen --all-groups --python 3.11
-	source ecos/server/.venv/bin/activate
-	bazel build //:ecos_studio_bundle
+	@cd ecos/server && uv sync --frozen --all-groups --python 3.11
+	PATH=$(CURDIR)/ecos/server/.venv/bin:$$PATH bazel build //:ecos_studio_bundle
 
 $(APPIMAGE_MARKER): $(BUNDLE_TAR)
 	@mkdir -p $(BUNDLE_EXTRACT_DIR)

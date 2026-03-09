@@ -33,8 +33,8 @@ dev:
 	cd ecos/gui && pnpm install
 
 $(BUNDLE_TAR):
-	cd ecc/server && uv sync --frozen --all-groups --python 3.11
-	source ecc/server/.venv/bin/activate
+	cd ecos/server && uv sync --frozen --all-groups --python 3.11
+	source ecos/server/.venv/bin/activate
 	bazel build //:ecos_studio_bundle
 
 $(APPIMAGE_MARKER): $(BUNDLE_TAR)

@@ -28,20 +28,21 @@ setup:
 	$(MAKE) -C pdk/icsprout55-pdk unzip
 	cd ecc && SKIP_VENV=1 bazel run //:prepare_dev
 
-build:
-	bazel build //:ecos_studio_bundle
-
 dev:
 	cd ecos/server && uv sync --all-groups --python 3.11
 	cd ecos/gui && pnpm install
 
 $(BUNDLE_TAR):
+	cd ecc/server && uv sync --frozen --all-groups --python 3.11
+	source ecc/server/.venv/bin/activate
 	bazel build //:ecos_studio_bundle
 
 $(APPIMAGE_MARKER): $(BUNDLE_TAR)
 	@mkdir -p $(BUNDLE_EXTRACT_DIR)
 	@tar -xf $(BUNDLE_TAR) -C $(BUNDLE_EXTRACT_DIR)
 	@touch $(APPIMAGE_MARKER)
+
+build: $(BUNDLE_TAR)
 
 gui: $(APPIMAGE_MARKER)
 	@APPIMAGE=$$(find $(BUNDLE_EXTRACT_DIR) -name "*.AppImage" | head -1); \

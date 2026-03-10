@@ -16,6 +16,7 @@ sh_binary(
 sh_binary(
     name = "dev_symlinks",
     srcs = ["scripts/dev-symlinks.sh"],
+    data = [":build_ecos_server"],
 )
 
 python_pyinstaller_bundle(

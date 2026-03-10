@@ -24,6 +24,7 @@ python_pyinstaller_bundle(
         "server/ecos_server/**/*.py",
     ]),
     output_name = "ecos-server",
+    env = {"PYTHON_INTERPRETER": "ecos/server/.venv/bin/python"},
     pyinstaller = "@ecos-bazel//tools:pyinstaller",
 )
 
@@ -42,9 +43,9 @@ genrule(
     ]) + [
         "//ecos/gui/src-tauri:tauri_rust_sources",
         ":build_ecos_server",
-        "@appimagetool_x86_64_linux//file",
-        "@oss_cad_suite//:all_files",
-        "@oss_cad_suite//:yosys_bin",
+        "@appimagetool_x86_64_linux//:appimagetool",
+        "@oss_cad_suite_pruned//:all_files",
+        "@oss_cad_suite_pruned//:yosys_bin",
         ":build_gui_script",
     ],
     outs = ["ecos_studio_bundle/ecos_studio_bundle.tar"],
@@ -55,8 +56,8 @@ genrule(
         bash "$(location :build_gui_script)" \\
             --gui-src-dir "$$(dirname $(location gui/package.json))" \\
             --api-server-bin "$(location :build_ecos_server)" \\
-            --appimagetool-bin "$(location @appimagetool_x86_64_linux//file)" \\
-            --oss-cad-bin "$(location @oss_cad_suite//:yosys_bin)" \\
+            --appimagetool-bin "$(location @appimagetool_x86_64_linux//:appimagetool)" \\
+            --oss-cad-bin "$(location @oss_cad_suite_pruned//:yosys_bin)" \\
             --out-tar "$@"
     """,
 )

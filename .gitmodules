@@ -1,6 +1,3 @@
-[submodule "ip/SoCExamples"]
-	path = ip/SoCExamples
-	url = git@github.com:Emin017/SoCExamples.git
 [submodule "ip/retroSoC"]
 	path = ip/retroSoC
 	url = git@github.com:retroSoC/retroSoC.git

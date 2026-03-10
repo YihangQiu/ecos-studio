@@ -50,6 +50,10 @@ gui: $(APPIMAGE_MARKER)
 clean-gui:
 	rm -rf $(BUNDLE_EXTRACT_DIR)
 
+clean:
+	rm -rf bazel-*
+	bazel clean --expunge
+
 demo-gcd:
 	nix run $(ECC_CLI) -- --workspace $(GCD_WS) \
 		--rtl ./eda/ecc/docs/examples/gcd/gcd.v \

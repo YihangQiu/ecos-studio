@@ -54,9 +54,6 @@ Run ECC CLI flow for various examples:
 # GCD demo
 make demo-gcd
 
-# SoC example (filelist mode)
-make demo-soc
-
 # retroSoC example
 make demo-retrosoc
 ```

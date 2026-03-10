@@ -48,7 +48,7 @@ fi
 
 TAURI_DIR="$WS/ecos/gui/src-tauri"
 make_link "$TAURI_DIR/binaries"  "api-server-$TRIPLE" "$API_SERVER_ABS"
-make_link "$TAURI_DIR/resources"  "oss-cad-suite"      "$OSS_CAD_DIR"
+make_link "$TAURI_DIR/resources"  "oss-cad-suite"      "$OSS_CAD_DIR/oss-cad-suite"
 
 echo
 echo "Done. Dev symlinks created."

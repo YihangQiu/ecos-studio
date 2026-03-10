@@ -38,6 +38,7 @@ check-setup:
 dev: check-setup
 	@cd ecos/server && uv sync --all-groups --python 3.11
 	@cd ecos/gui && pnpm install
+	bazel run //ecos:dev_symlinks
 
 $(BUNDLE_TAR): check-setup
 	@cd ecos/server && uv sync --frozen --all-groups --python 3.11

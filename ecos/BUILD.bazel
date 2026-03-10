@@ -5,12 +5,17 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "build_gui_script",
-    srcs = ["build-gui.sh"],
+    srcs = ["scripts/build-gui.sh"],
 )
 
 sh_binary(
     name = "prepare_ecos_server",
-    srcs = ["prepare-ecos-server.sh"],
+    srcs = ["scripts/prepare-ecos-server.sh"],
+)
+
+sh_binary(
+    name = "dev_symlinks",
+    srcs = ["scripts/dev-symlinks.sh"],
 )
 
 python_pyinstaller_bundle(

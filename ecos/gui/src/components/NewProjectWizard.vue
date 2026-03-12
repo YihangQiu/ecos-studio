@@ -335,17 +335,31 @@
                         </label>
                         <span class="text-sm font-bold text-(--accent-color) bg-(--accent-color)/10 px-2 py-0.5 rounded-md font-mono">{{ config.parameters.frequency_max }} MHz</span>
                       </div>
-                      <input v-model.number="config.parameters.frequency_max" type="range" min="10" max="1000" step="10"
-                        class="w-full h-2.5 bg-(--bg-secondary)/60 rounded-full appearance-none cursor-pointer accent-(--accent-color)" />
+                      <input
+                        v-model.number="config.parameters.frequency_max"
+                        type="number"
+                        min="10"
+                        max="1000"
+                        step="10"
+                        class="w-full px-4 py-2.5 bg-(--bg-secondary)/40 border border-(--border-color) rounded-xl text-(--text-primary) focus:outline-none focus:border-(--accent-color) focus:bg-(--bg-primary)/80 transition-colors duration-200 shadow-sm"
+                      />
                     </div>
-                    
+
                     <!-- Max Fanout -->
-                    <div class="group">
-                      <label class="block text-sm font-semibold text-(--text-primary) mb-2 group-focus-within:text-(--accent-color) transition-colors duration-200">
-                        Max Fanout
-                      </label>
-                      <input v-model.number="config.parameters.max_fanout" type="number" min="1" max="100"
-                        class="w-full px-4 py-2.5 bg-(--bg-secondary)/40 border border-(--border-color) rounded-xl text-(--text-primary) focus:outline-none focus:border-(--accent-color) focus:bg-(--bg-primary)/80 transition-colors duration-200 shadow-sm" />
+                    <div>
+                      <div class="flex items-center justify-between mb-3">
+                        <label class="block text-sm font-semibold text-(--text-primary)">
+                          Max Fanout
+                        </label>
+                        <span class="text-sm font-bold text-(--accent-color) bg-(--accent-color)/10 px-2 py-0.5 rounded-md font-mono">{{ config.parameters.max_fanout }}</span>
+                      </div>
+                      <input
+                        v-model.number="config.parameters.max_fanout"
+                        type="number"
+                        min="1"
+                        max="100"
+                        class="w-full px-4 py-2.5 bg-(--bg-secondary)/40 border border-(--border-color) rounded-xl text-(--text-primary) focus:outline-none focus:border-(--accent-color) focus:bg-(--bg-primary)/80 transition-colors duration-200 shadow-sm"
+                      />
                     </div>
                   </div>
 
@@ -359,25 +373,37 @@
                       <!-- Core Utilization -->
                       <div>
                         <div class="flex items-center justify-between mb-3">
-                          <label class="block text-sm font-medium text-(--text-primary)">
+                          <label class="block text-sm font-semibold text-(--text-primary)">
                             Core Utilization
                           </label>
-                          <span class="text-sm font-bold text-(--text-primary) font-mono">{{ ((config.parameters.core_utilization as number || 0.5) * 100).toFixed(0) }}%</span>
+                          <span class="text-sm font-bold text-(--accent-color) bg-(--accent-color)/10 px-2 py-0.5 rounded-md font-mono">{{ ((config.parameters.core_utilization as number || 0.5) * 100).toFixed(0) }}%</span>
                         </div>
-                        <input v-model.number="config.parameters.core_utilization" type="range" min="0.1" max="0.9" step="0.05"
-                          class="w-full h-2 bg-(--border-color) rounded-full appearance-none cursor-pointer accent-(--accent-color)" />
+                        <input
+                          v-model.number="config.parameters.core_utilization"
+                          type="number"
+                          min="0.1"
+                          max="0.9"
+                          step="0.05"
+                          class="w-full px-4 py-2.5 bg-(--bg-secondary)/40 border border-(--border-color) rounded-xl text-(--text-primary) focus:outline-none focus:border-(--accent-color) focus:bg-(--bg-primary)/80 transition-colors duration-200 shadow-sm"
+                        />
                       </div>
 
                       <!-- Target Density -->
                       <div>
                         <div class="flex items-center justify-between mb-3">
-                          <label class="block text-sm font-medium text-(--text-primary)">
+                          <label class="block text-sm font-semibold text-(--text-primary)">
                             Target Density
                           </label>
-                          <span class="text-sm font-bold text-(--text-primary) font-mono">{{ ((config.parameters.target_density as number || 0.6) * 100).toFixed(0) }}%</span>
+                          <span class="text-sm font-bold text-(--accent-color) bg-(--accent-color)/10 px-2 py-0.5 rounded-md font-mono">{{ ((config.parameters.target_density as number || 0.6) * 100).toFixed(0) }}%</span>
                         </div>
-                        <input v-model.number="config.parameters.target_density" type="range" min="0.1" max="0.9" step="0.05"
-                          class="w-full h-2 bg-(--border-color) rounded-full appearance-none cursor-pointer accent-(--accent-color)" />
+                        <input
+                          v-model.number="config.parameters.target_density"
+                          type="number"
+                          min="0.1"
+                          max="0.9"
+                          step="0.05"
+                          class="w-full px-4 py-2.5 bg-(--bg-secondary)/40 border border-(--border-color) rounded-xl text-(--text-primary) focus:outline-none focus:border-(--accent-color) focus:bg-(--bg-primary)/80 transition-colors duration-200 shadow-sm"
+                        />
                       </div>
                     </div>
                   </div>

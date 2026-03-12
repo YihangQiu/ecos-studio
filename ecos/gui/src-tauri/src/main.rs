@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::io::IsTerminal;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -7,6 +8,81 @@ use std::thread;
 use std::time::Duration;
 use tauri::Manager;
 use tauri_plugin_fs::FsExt;
+
+/// Fixed log file path for the API server (matches Python's --log-file default).
+/// In terminal mode Rust tees here; in desktop mode Python writes here directly.
+const API_SERVER_LOG_FILE: &str = "/tmp/ecos-studio-api-server.log";
+
+/// Returns true when the process was launched from an interactive terminal
+/// (i.e. stderr is a TTY). False when launched from a desktop file / launcher.
+fn is_launched_from_terminal() -> bool {
+    std::io::stderr().is_terminal()
+}
+
+/// Open a file with the system's default application (text editor / file manager).
+fn open_log_file(path: &str) {
+    #[cfg(target_os = "linux")]
+    let _ = Command::new("xdg-open").arg(path).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(path).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("cmd").args(["/C", "start", "", path]).spawn();
+}
+
+/// Drain a child's stdout or stderr pipe in a background thread.
+///
+/// * `to_terminal` – if true, also echo each line to Rust's own stdout/stderr
+///   AND write it to `log_path` (used in terminal-launch mode where Python has
+///   `--disable-stdio-redirect` so all output stays on the pipe).
+/// * `to_terminal = false` – desktop-launch mode: Python writes to log itself;
+///   we only drain the pipe to prevent the child from blocking on a full buffer.
+#[cfg(not(debug_assertions))]
+fn tee_output(
+    reader: impl std::io::Read + Send + 'static,
+    log_path: String,
+    to_terminal: bool,
+    is_stderr: bool,
+) {
+    use std::fs::OpenOptions;
+    use std::io::{BufRead, BufReader, Write};
+
+    thread::spawn(move || {
+        // Only open the log file when WE are responsible for writing to it
+        // (terminal mode). In desktop mode Python already writes there.
+        let mut log_writer = if to_terminal {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .map_err(|e| {
+                    eprintln!("⚠️ Cannot open log file {}: {}", log_path, e);
+                    e
+                })
+                .ok()
+        } else {
+            None
+        };
+
+        let reader = BufReader::new(reader);
+        for line in reader.lines() {
+            match line {
+                Ok(l) => {
+                    if let Some(ref mut f) = log_writer {
+                        let _ = writeln!(f, "{}", l);
+                    }
+                    if to_terminal {
+                        if is_stderr {
+                            eprintln!("{}", l);
+                        } else {
+                            println!("{}", l);
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
 
 // Global reference to the FastAPI server process
 type ApiServerProcess = Arc<Mutex<Option<Child>>>;
@@ -388,9 +464,11 @@ fn start_api_server(
             }
         };
 
+        let launched_from_terminal = is_launched_from_terminal();
+
         println!(
-            "Starting FastAPI server (prod mode) from: {:?} on port {}",
-            server_binary, port
+            "Starting FastAPI server (prod mode) from: {:?} on port {} (terminal: {})",
+            server_binary, port, launched_from_terminal
         );
 
         let mut cmd = Command::new(&server_binary);
@@ -403,27 +481,77 @@ fn start_api_server(
             eprintln!("⚠️ Synthesis may fail if yosys is unavailable in PATH.");
         }
 
-        match cmd
-            .arg("--host")
+        // Always pass a fixed log-file path so we know where to look on errors.
+        cmd.arg("--host")
             .arg("127.0.0.1")
             .arg("--port")
             .arg(port.to_string())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => {
+            .arg("--log-file")
+            .arg(API_SERVER_LOG_FILE)
+            .arg("--no-timestamp-log-file");
+
+        if launched_from_terminal {
+            // Terminal launch: keep output on child's stdio so we can tee it.
+            // Python will NOT redirect to file; Rust handles writing to both
+            // the terminal and the log file via the tee threads below.
+            cmd.arg("--disable-stdio-redirect");
+            println!("📋 Server logs → terminal + {}", API_SERVER_LOG_FILE);
+        } else {
+            // Desktop launch: Python redirects its own stdio to the log file.
+            // Rust only needs to drain the pipes to prevent buffer blocking.
+            println!("📋 Server logs → {}", API_SERVER_LOG_FILE);
+        }
+
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        match cmd.spawn() {
+            Ok(mut child) => {
                 println!(
                     "✅ FastAPI server started with PID: {} on port {}",
                     child.id(),
                     port
                 );
+
+                // Drain (and optionally tee) the child's stdout/stderr pipes.
+                // This is required in both modes to prevent the child from
+                // blocking when the OS pipe buffer fills up.
+                if let Some(stdout) = child.stdout.take() {
+                    tee_output(
+                        stdout,
+                        API_SERVER_LOG_FILE.to_string(),
+                        launched_from_terminal,
+                        false,
+                    );
+                }
+                if let Some(stderr) = child.stderr.take() {
+                    tee_output(
+                        stderr,
+                        API_SERVER_LOG_FILE.to_string(),
+                        launched_from_terminal,
+                        true,
+                    );
+                }
+
                 ApiStartResult::Started(child, port)
             }
             Err(e) => {
                 eprintln!("❌ Failed to start FastAPI server: {}", e);
                 eprintln!("   Binary path: {:?}", server_binary);
                 eprintln!("   Error details: {:?}", e.kind());
+                // Write the error into the log file so desktop users can see it
+                // when the file is opened automatically.
+                if !launched_from_terminal {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(API_SERVER_LOG_FILE)
+                    {
+                        let _ = writeln!(f, "❌ Failed to start FastAPI server: {}", e);
+                        let _ = writeln!(f, "   Binary path: {:?}", server_binary);
+                        let _ = writeln!(f, "   Error details: {:?}", e.kind());
+                    }
+                }
                 ApiStartResult::Failed
             }
         }
@@ -650,7 +778,7 @@ fn restart_api_server(
     }
 }
 
-/// 强制清理端口上的进程
+/// Forcefully clean up processes on a port
 #[tauri::command]
 fn kill_port_process(port_state: tauri::State<'_, ActualApiPort>) -> Result<String, String> {
     let port = *port_state
@@ -671,7 +799,7 @@ fn kill_port_process(port_state: tauri::State<'_, ActualApiPort>) -> Result<Stri
     Err(format!("Could not free port {}", port))
 }
 
-/// 获取调试信息（用于诊断生产环境问题）
+/// Get debug information (for diagnosing production issues)
 #[tauri::command]
 fn get_debug_info(
     app: tauri::AppHandle,
@@ -735,28 +863,21 @@ fn get_debug_info(
     info
 }
 
-/// 获取当前 API 服务器端口（前端用此命令获取实际使用的端口）
 #[tauri::command]
 fn get_api_port(port_state: tauri::State<'_, ActualApiPort>) -> u16 {
     *port_state.lock().unwrap()
 }
 
-/// 动态授予文件系统访问权限
-///
-/// 此命令允许前端在运行时请求访问特定目录的权限，
-/// 实现了最小权限原则：应用启动时无全盘访问，仅在用户明确操作后动态授予。
 #[tauri::command]
 async fn request_project_permission(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use std::path::PathBuf;
 
-    // 获取文件系统作用域管理器
     let scope = app.fs_scope();
     let path_buf = PathBuf::from(&path);
 
-    // 递归允许访问该目录及其子目录 (文件系统)
     scope
         .allow_directory(&path_buf, true)
-        .map_err(|e| format!("无法授予文件系统访问权限 {}: {}", path_buf.display(), e))?;
+        .map_err(|e| format!("Unable to grant file system access permissions {}: {}", path_buf.display(), e))?;
     Ok(())
 }
 
@@ -816,6 +937,13 @@ fn main() {
                     }
                     if !wait_for_server_ready(actual_port, 15) {
                         eprintln!("⚠️ FastAPI server may not be fully ready after 15s");
+                        // In release desktop mode, open the log file so the user
+                        // can see what went wrong without needing a terminal.
+                        #[cfg(not(debug_assertions))]
+                        if !is_launched_from_terminal() {
+                            eprintln!("Opening server log: {}", API_SERVER_LOG_FILE);
+                            open_log_file(API_SERVER_LOG_FILE);
+                        }
                     }
                 });
 

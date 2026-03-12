@@ -19,7 +19,6 @@ Desktop application providing an integrated development environment for chip des
 
 ### 2. Open Source IP (`ip/`)
 Pre-verified infrastructure for composable design, including configurable SoC templates and common peripherals.
-- [SoCExamples](ip/SoCExamples)
 - [retroSoC](ip/retroSoC)
 
 ### 3. Open Source EDA (`ecc/`)
@@ -53,9 +52,6 @@ Run ECC CLI flow for various examples:
 ```bash
 # GCD demo
 make demo-gcd
-
-# SoC example (filelist mode)
-make demo-soc
 
 # retroSoC example
 make demo-retrosoc

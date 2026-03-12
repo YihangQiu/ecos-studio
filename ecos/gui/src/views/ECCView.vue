@@ -6,7 +6,7 @@
     <button @click="goBack"
       class="absolute top-6 left-6 z-20 flex items-center gap-2 px-3 py-2 rounded-lg bg-(--bg-secondary) border border-(--border-color) hover:border-(--accent-color) text-(--text-secondary) hover:text-(--accent-color) transition-all duration-200 cursor-pointer text-sm">
       <i class="ri-arrow-left-line"></i>
-      <span>返回 ECOS</span>
+      <span>Back to ECOS</span>
     </button>
 
     <div class="relative z-10 flex flex-col items-center w-full">

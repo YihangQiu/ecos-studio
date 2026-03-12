@@ -505,7 +505,7 @@
               </button>
               
               <button v-else @click="createProject" :disabled="isCreating"
-                class="px-8 py-3 bg-gradient-to-r from-(--accent-color) to-purple-600 text-white rounded-xl hover:opacity-90 shadow-md hover:shadow-lg transition-all duration-200 font-bold cursor-pointer flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                class="px-8 py-3 bg-(--accent-color) text-white rounded-xl hover:opacity-90 shadow-md hover:shadow-lg transition-all duration-200 font-bold cursor-pointer flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                 <i v-if="isCreating" class="ri-loader-4-line animate-spin"></i>
                 <i v-else class="ri-rocket-line"></i>
                 {{ isCreating ? 'Creating Project...' : 'Create Project' }}

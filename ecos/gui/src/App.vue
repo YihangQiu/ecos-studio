@@ -48,7 +48,7 @@ const route = useRoute()
 const isWelcome = computed(() => route.path === '/')
 const { loadRecentProjects, currentProject, openProject, newProject } = useWorkspace()
 const { loadPdks } = usePdkManager()
-
+const { showToast } = useWorkspace()
 // ---- 新建工程向导 ----
 const showNewProjectWizard = ref(false)
 
@@ -70,7 +70,17 @@ const handleMenuAction = async (action: string) => {
       break
     }
     case 'documentation':
-      shellOpen('https://github.com/openecos-projects/ecc/blob/main/docs/user-guide.md')
+      try {
+        await shellOpen('https://github.com/openecos-projects/ecc/blob/main/docs/user-guide.md')
+      } catch (error) {
+        console.error('Failed to open documentation:', error)
+        showToast({
+          severity: 'error',
+          summary: 'Error',
+          detail: `Failed to open documentation because of ${error instanceof Error ? error.message : String(error)}`,
+          life: 3000
+        })
+      }
       break
     case 'about':
       // TODO: 打开关于对话框

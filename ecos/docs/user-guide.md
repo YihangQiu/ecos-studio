@@ -9,6 +9,7 @@ This guide will walk you through using ECOS Studio to design and implement your 
   - [Getting Started](#getting-started)
     - [Launching ECOS Studio](#launching-ecos-studio)
     - [Welcome Screen](#welcome-screen)
+  - [Starting a Backend Design](#starting-a-backend-design)
   - [Creating a New Workspace](#creating-a-new-workspace)
     - [Step 1: Project Basics](#step-1-project-basics)
     - [Step 2: Design Files](#step-2-design-files)
@@ -52,9 +53,33 @@ ecc-client
 ### Welcome Screen
 
 When you first launch ECOS Studio, you'll see the welcome screen with options to:
-- **New Workspace** - Create a new chip design project
-- **Open Workspace** - Open an existing project
-- **Recent Projects** - Quick access to recently opened projects
+
+**Design Tools:**
+
+The home screen presents two design tool cards:
+
+- **Frontend Design** *(Coming Soon)* - RTL / Verilog / SystemVerilog design entry (not yet available)
+- **Backend Design** - The main chip implementation tool covering **Synthesis → P&R → GDS**. Click this card to enter the backend design environment.
+
+**Resources:**
+
+- **IP Catalog** *(Coming Soon)* - Browse reusable IP blocks
+- **PDK Manager** - Manage your Process Design Kits
+
+**Explore:**
+
+- **Benchmarks** *(Coming Soon)* - Compare design metrics
+- **Documentation** *(Coming Soon)* - Access guides and references
+
+**Project Access:**
+
+- **Continue Working:** a **Resume** Click it to quickly resume where you left off in your last project.
+- **Project Management:** Click the **Project Management** button at the bottom to view and manage all your projects.
+
+> [!NOTE]
+> The **Frontend Design tool** and some **Resources** sections are still under development and will be available in future releases. Stay tuned for updates!
+> You can try out the backend design flow with your own RTL files and the provided PDK to experience the core features of ECOS Studio.
+>
 
 <div align="center">
   <img src="asset/overview-light.png" alt="Welcome Screen" style="max-width: 80%; height: auto;">
@@ -62,6 +87,15 @@ When you first launch ECOS Studio, you'll see the welcome screen with options to
 </br>
 
 ---
+
+## Starting a Backend Design
+
+After launching ECOS Studio, you'll see the home screen with the backend design card. Click on the **"Backend Design"** card to start creating your chip design project.
+
+<div align="center">
+  <img src="asset/start-backend-design.png" alt="Start Backend Design" style="max-width: 80%; height: auto;">
+</div>
+</br>
 
 ## Creating a New Workspace
 
@@ -120,10 +154,6 @@ Upload your RTL design files:
 - **Clock Signal Name** - Main clock signal for timing constraints
   - Example: `clk`, `clock`, `sys_clk`
 
-<div align="center">
-  <img src="asset/wizard-step2-design-info.png" alt="Step 2: Design Info" style="max-width: 60%; height: auto;">
-</div>
-</br>
 
 **File Management:**
 - View all added files in the file list

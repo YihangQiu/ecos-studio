@@ -1,4 +1,4 @@
-.PHONY: help setup build dev gui clean-gui demo-gcd demo-soc demo-retrosoc docker-build docker-verify-all
+.PHONY: help setup check-setup build dev gui clean-gui demo-gcd demo-soc demo-retrosoc docker-build docker-verify-all
 
 BUNDLE_TAR := bazel-bin/ecos/ecos_studio_bundle/ecos_studio_bundle.tar
 BUNDLE_EXTRACT_DIR := /tmp/ecos-studio-bundle
@@ -27,12 +27,20 @@ setup:
 	git submodule update --init --recursive
 	$(MAKE) -C pdk/icsprout55-pdk unzip
 	cd ecc && SKIP_VENV=1 bazel run //:prepare_dev
+	@touch .setup-done
 
-dev:
+check-setup:
+	@if [ ! -f .setup-done ]; then \
+		echo "Error: Please run 'make setup' before this target."; \
+		exit 1; \
+	fi
+
+dev: check-setup
 	@cd ecos/server && uv sync --all-groups --python 3.11
 	@cd ecos/gui && pnpm install
+	bazel run //ecos:dev_symlinks
 
-$(BUNDLE_TAR):
+$(BUNDLE_TAR): check-setup
 	@cd ecos/server && uv sync --frozen --all-groups --python 3.11
 	PATH=$(CURDIR)/ecos/server/.venv/bin:$$PATH bazel build //:ecos_studio_bundle
 
@@ -53,20 +61,15 @@ clean-gui:
 clean:
 	rm -rf bazel-*
 	bazel clean --expunge
+	@rm -f .setup-done
 
-demo-gcd:
+demo-gcd: check-setup
 	nix run $(ECC_CLI) -- --workspace $(GCD_WS) \
 		--rtl ./eda/ecc/docs/examples/gcd/gcd.v \
 		--design gcd --top gcd --clock clk \
 		--pdk-root $(PDK_ROOT)
 
-demo-soc:
-	nix run $(ECC_CLI) -- --workspace $(SOC_WS) \
-		--rtl ./ip/SoCExamples/soc/filelist.f \
-		--design ysyxSoCASIC --top ysyxSoCASIC --clock clock \
-		--pdk-root $(PDK_ROOT) --freq 200
-
-demo-retrosoc:
+demo-retrosoc: check-setup
 	@echo "Building retroSoC filelist..."
 	@mkdir -p $(dir $(RETROSOC_WS)/retrosoc.f)
 	@( \

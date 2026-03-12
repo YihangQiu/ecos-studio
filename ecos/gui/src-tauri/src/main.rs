@@ -287,33 +287,24 @@ fn start_api_server(
     #[cfg(debug_assertions)]
     {
         // Development mode: use Python script with virtual environment
-        let mut server_script = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        server_script.push("..");
-        server_script.push("..");
-        server_script.push("chipcompiler");
-        server_script.push("server");
-        server_script.push("run_server.py");
-
-        // Use venv Python interpreter if available, otherwise fall back to system Python
-        let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        // Server lives at ecos/server/ (sibling of ecos/gui/)
+        let server_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("..");
-        let chipcompiler_dir = project_root.join("chipcompiler");
-        let tauri_dir = project_root.join("gui").join("src-tauri");
+            .join("..")
+            .join("server");
+        let server_script = server_dir.join("run_server.py");
 
+        // Use venv Python from ecos/server/.venv if available
         #[cfg(target_os = "windows")]
-        let venv_python = project_root
-            .join(".venv")
-            .join("Scripts")
-            .join("python.exe");
+        let venv_python = server_dir.join(".venv").join("Scripts").join("python.exe");
         #[cfg(not(target_os = "windows"))]
-        let venv_python = project_root.join(".venv").join("bin").join("python3");
+        let venv_python = server_dir.join(".venv").join("bin").join("python3");
 
         let interpreter = if venv_python.exists() {
             println!("Using venv Python: {:?}", venv_python);
             venv_python.to_string_lossy().to_string()
         } else {
-            println!("Venv not found, using system Python");
+            println!("Venv not found at {:?}, using system Python", venv_python);
             #[cfg(target_os = "windows")]
             {
                 "python".to_string()
@@ -323,11 +314,6 @@ fn start_api_server(
                 "python3".to_string()
             }
         };
-
-        let oss_cad_dir = project_root
-            .join("chipcompiler")
-            .join("thirdparty")
-            .join("oss-cad-suite");
 
         println!(
             "Starting FastAPI server (dev mode) from: {:?} on port {}",
@@ -342,26 +328,13 @@ fn start_api_server(
             .arg(port.to_string())
             .arg("--reload")
             .arg("--reload-dir")
-            .arg(chipcompiler_dir.to_string_lossy().to_string())
-            .arg("--reload-dir")
-            .arg(tauri_dir.to_string_lossy().to_string())
+            .arg(server_dir.to_string_lossy().to_string())
             .arg("--disable-stdio-redirect")
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .current_dir(&project_root);
+            .current_dir(&server_dir);
 
-        if oss_cad_dir.join("bin").join("yosys").exists() {
-            println!("Setting CHIPCOMPILER_OSS_CAD_DIR to {:?}", oss_cad_dir);
-            cmd.env("CHIPCOMPILER_OSS_CAD_DIR", &oss_cad_dir);
-        } else {
-            eprintln!(
-                "⚠️ OSS CAD Suite not found at {:?}, yosys must be available in PATH.",
-                oss_cad_dir
-            );
-        }
-
-        match cmd.spawn()
-        {
+        match cmd.spawn() {
             Ok(child) => {
                 println!(
                     "✅ FastAPI server started with PID: {} on port {}",

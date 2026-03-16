@@ -3,7 +3,17 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readDir } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
+import { useWorkspace } from './useWorkspace'
 import type { ImportedPdk } from '../types'
+
+
+const { showToast } = useWorkspace()
+/** 路径中是否包含中文或空格（不允许，会导致工具链异常） */
+function pathHasInvalidChars(path: string): boolean {
+  const hasSpace = /\s/.test(path)
+  const hasChinese = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/.test(path)
+  return hasSpace || hasChinese
+}
 
 // 共享单例 store（与 useWorkspace 共用同一个 settings.json）
 const store = new LazyStore('settings.json')
@@ -132,6 +142,12 @@ export function usePdkManager() {
 
       const path = result as string
 
+      // 路径不允许包含中文或空格，避免工具链异常
+      if (pathHasInvalidChars(path)) {
+        showToast({ severity: 'error', summary: 'Invalid PDK Path', detail: 'PDK path cannot contain Chinese or spaces, please select a directory containing only English, numbers and common symbols.' })
+        return null
+      }
+
       // 检查是否已导入（路径去重）
       const normalizedPath = path.replace(/\\/g, '/').replace(/\/$/, '')
       const existing = importedPdks.value.find(
@@ -172,6 +188,11 @@ export function usePdkManager() {
    */
   const importPdkByPath = async (path: string): Promise<ImportedPdk | null> => {
     try {
+      if (pathHasInvalidChars(path)) {
+        console.warn('[usePdkManager] 无效的 PDK 路径：路径不能包含中文或空格，请选择仅含英文、数字及常见符号的目录。path:', path)
+        return null
+      }
+
       const normalizedPath = path.replace(/\\/g, '/').replace(/\/$/, '')
       const existing = importedPdks.value.find(
         p => p.path.replace(/\\/g, '/').replace(/\/$/, '') === normalizedPath

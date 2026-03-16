@@ -2,7 +2,7 @@
 
 ECOS Studio is an integrated, one-stop silicon design solution that democratizes access to custom silicon. It vertically integrates open-source IP libraries, a robust EDA toolchain, and accessible PDKs into a unified framework, providing an "FPGA-like" experience for ASIC design.
 
-![ECOS Studio Overview](ecos/docs/figs/ecos-studio-solution.png)
+![ECOS Studio Overview](ecos/docs/asset/ecos-studio-solution.png)
 
 Our goal is to lower the barrier of chip design for researchers, engineers, and students, bridging the gap from RTL design to physical realization.
 

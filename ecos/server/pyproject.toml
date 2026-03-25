@@ -11,6 +11,8 @@ dependencies = [
   "fastapi>=0.109",
   "uvicorn>=0.27",
 ]
+[project.optional-dependencies]
+dreamplace = ["ecc[dreamplace]==0.1.0"]
 
 [dependency-groups]
 dev = [
@@ -26,8 +28,14 @@ dev = [
   "ty>=0.0.9"
 ]
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
 ecc = { path = "../../ecc", editable = true }
+torch = { index = "pytorch-cpu" }
 
 [tool.ruff]
 line-length = 100

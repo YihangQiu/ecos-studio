@@ -24,7 +24,6 @@ import argparse
 import uvicorn
 
 from chipcompiler.utility.log import (
-    API_RUNTIME_LOG_ENV_KEY,
     build_timestamped_log_file,
     init_api_runtime_log,
 )
@@ -36,14 +35,13 @@ def _setup_logging(args) -> str:
     """
     log_file = os.path.abspath(os.path.expanduser(args.log_file))
 
+    if args.timestamp_log_file:
+        log_file = build_timestamped_log_file(log_file=log_file, pid=os.getpid())
+
     if args.disable_stdio_redirect:
-        os.environ.pop(API_RUNTIME_LOG_ENV_KEY, None)
         print("[API_LOG] stdio redirect disabled; logs stay on console.",
               file=sys.stderr, flush=True)
         return log_file
-
-    if args.timestamp_log_file:
-        log_file = build_timestamped_log_file(log_file=log_file, pid=os.getpid())
 
     print(f"[API_LOG] log -> {log_file} (tail -f {log_file})",
           file=sys.stderr, flush=True)
@@ -53,7 +51,6 @@ def _setup_logging(args) -> str:
         max_bytes=args.log_max_bytes,
         backup_count=args.log_backup_count,
     )
-    os.environ[API_RUNTIME_LOG_ENV_KEY] = log_file
     return log_file
 
 
@@ -77,6 +74,13 @@ def main():
                         help="Number of backup files to keep")
     parser.add_argument("--disable-stdio-redirect", action="store_true",
                         help="Keep stdout/stderr on console")
+    parser.add_argument("--log-level", default=os.environ.get("ECOS_API_LOG_LEVEL", "warning"),
+                        help="Uvicorn log level (default: warning)")
+    parser.add_argument("--access-log", dest="access_log", action="store_true",
+                        help="Enable Uvicorn access logs")
+    parser.add_argument("--no-access-log", dest="access_log", action="store_false",
+                        help="Disable Uvicorn access logs (default)")
+    parser.set_defaults(access_log=False)
     parser.add_argument("--timestamp-log-file", dest="timestamp_log_file",
                         action="store_true", default=True,
                         help="Timestamped log filename per startup (default)")
@@ -104,7 +108,8 @@ def main():
         port=args.port,
         reload=args.reload,
         reload_dirs=reload_dirs or None,
-        log_level="info"
+        log_level=args.log_level,
+        access_log=args.access_log,
     )
 
 

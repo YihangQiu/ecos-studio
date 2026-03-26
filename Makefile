@@ -28,12 +28,16 @@ help:
 setup:
 	git submodule update --init --recursive
 	$(MAKE) -C pdk/icsprout55-pdk unzip
-	cd ecc && SKIP_VENV=1 bazel run //:prepare_dev
+	cd ecc && bazel run //:prepare_dev
 	@touch .setup-done
 
 check-setup:
 	@if [ ! -f .setup-done ]; then \
 		echo "Error: Please run 'make setup' before this target."; \
+		exit 1; \
+	fi
+	@if [ ! -d ecc/.venv ]; then \
+		echo "Error: ecc/.venv not found. Please run 'make setup' to create it."; \
 		exit 1; \
 	fi
 

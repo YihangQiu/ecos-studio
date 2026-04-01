@@ -112,6 +112,7 @@
         <div class="analysis-content">
           <div class="charts-grid" v-if="analysisCharts.length > 0">
             <div class="chart-card" v-for="chart in analysisCharts" :key="chart.label"
+              :title="chart.label"
               @click="chart.imageBlobUrl && openChartPreview(chart.imageBlobUrl, chart.label)">
               <div class="chart-visual">
                 <img v-if="chart.imageBlobUrl" :src="chart.imageBlobUrl" :alt="chart.label" class="chart-image" />
@@ -128,31 +129,34 @@
         </div>
       </section>
 
-      <!-- ========== Row 3 Left: GDS Merge ========== -->
+      <!-- ========== Row 3 Left: Flow step log ========== -->
       <section class="section-card gds-area">
         <div class="section-header">
-          <div class="header-icon gds"><i class="ri-layout-grid-line"></i></div>
-          <h2>GDS Merge</h2>
+          <div class="header-icon gds"><i class="ri-terminal-line"></i></div>
+          <h2>Flow step log</h2>
+          <span v-if="flowLogStepName" class="header-badge">{{ flowLogStepName }}</span>
         </div>
-        <div class="gds-content">
-          <div class="gds-chip-diagram">
-            <div class="gds-title">ACTIVE</div>
-            <div class="gds-blocks-grid">
-              <div class="gds-block core">CORE</div>
-              <div class="gds-block rcu">RCU</div>
-              <div class="gds-block bus-row">
-                <span class="gds-bus-dot"></span>
-                <span>BUS</span>
+        <div class="flow-log-content">
+          <div v-if="flowLogError" class="flow-log-error">{{ flowLogError }}</div>
+          <div v-else-if="flowLogSegments.length" ref="flowLogScrollRef" class="flow-log-scroll">
+            <div
+              v-for="(seg, idx) in flowLogSegments"
+              :key="idx"
+              class="flow-log-step"
+              :class="{ failed: seg.failed, missing: seg.missing && !seg.failed }"
+            >
+              <div class="flow-log-step-header">
+                <span class="flow-log-step-title">{{ seg.stepName }}</span>
+                <span class="flow-log-step-meta">{{ seg.tool }}</span>
+                <span class="flow-log-step-state" :class="{ 'is-failed': seg.failed }">{{ seg.state }}</span>
               </div>
-              <div class="gds-block">SPIFS</div>
-              <div class="gds-block">UART</div>
-              <div class="gds-block">QSPI</div>
-              <div class="gds-block">PSRAM</div>
-              <div class="gds-block">GPIO</div>
-              <div class="gds-block">TIMER</div>
-              <div class="gds-block">I2C</div>
-              <div class="gds-block">PWM</div>
+              <pre class="flow-log-pre">{{ seg.content }}</pre>
             </div>
+          </div>
+          <div v-else class="flow-log-placeholder">
+            <i class="ri-terminal-line"></i>
+            <p>No flow step log yet</p>
+            <span>Unstarted steps are hidden. Logs show up here once a step begins or finishes.</span>
           </div>
         </div>
       </section>
@@ -241,7 +245,29 @@ import { useHomeData } from '@/composables/useHomeData'
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const { config } = useParameters()
-const { monitorData, checklistItems, layoutBlobUrl, analysisCharts } = useHomeData()
+const {
+  monitorData,
+  checklistItems,
+  layoutBlobUrl,
+  analysisCharts,
+  flowLogSegments,
+  flowLogStepName,
+  flowLogError,
+} = useHomeData()
+
+const flowLogScrollRef = ref<HTMLElement | null>(null)
+
+watch(
+  flowLogSegments,
+  async () => {
+    await nextTick()
+    const el = flowLogScrollRef.value
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  },
+  { deep: true }
+)
 
 // checklist 完成计数
 const checklistCompletedCount = computed(() =>
@@ -1127,16 +1153,18 @@ function stateClass(state: string): string {
 /* ==================== 指标分析 ==================== */
 .analysis-content {
   flex: 1;
-  padding: 8px;
+  padding: 10px;
   overflow: auto;
+  min-height: 0;
 }
 
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: 1fr 1fr;
-  gap: 6px;
+  grid-auto-rows: minmax(128px, 1fr);
+  gap: 10px;
   height: 100%;
+  min-height: 260px;
 }
 
 /* Last row span adjustment for uneven items */
@@ -1155,16 +1183,21 @@ function stateClass(state: string): string {
 .chart-card {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 6px;
-  transition: border-color 0.15s ease;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
   cursor: pointer;
   overflow: hidden;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+html.dark .chart-card {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .chart-card:hover {
@@ -1177,27 +1210,46 @@ function stateClass(state: string): string {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 0;
+  min-height: 112px;
   font-size: 28px;
   color: var(--text-secondary);
   opacity: 0.25;
+  /* 浅色 PNG 在深色卡片内用衬底收边，避免整块发白刺眼 */
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 8px;
 }
 
 .chart-visual img.chart-image {
   width: 100%;
   height: 100%;
+  min-height: 96px;
   object-fit: contain;
   display: block;
   opacity: 1;
+  border-radius: 4px;
+  background: #f3f4f6;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+html.dark .chart-visual img.chart-image {
+  background: #eceef2;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
 }
 
 .chart-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-secondary);
+  line-height: 1.25;
+  color: var(--text-primary);
   text-align: center;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
   flex-shrink: 0;
+  letter-spacing: 0.02em;
 }
 
 /* ===== 图表预览 Lightbox ===== */
@@ -1341,89 +1393,149 @@ function stateClass(state: string): string {
   opacity: 0.6;
 }
 
-/* ==================== GDS Merge ==================== */
-.gds-content {
+/* ==================== Flow step log ==================== */
+.flow-log-content {
   flex: 1;
-  padding: 10px;
+  min-height: 0;
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flow-log-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.flow-log-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.flow-log-step-header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.flow-log-step-title {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.flow-log-step-meta {
+  font-family: 'JetBrains Mono', monospace;
+  opacity: 0.85;
+}
+
+.flow-log-step-state {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-log-step-state.is-failed {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.flow-log-pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  max-height: 320px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  /* 浅色下用近黑色正文，避免仅用 var(--text-primary) 时被继承链/组件库压成浅灰 */
+  color: #111827;
+  opacity: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+html.dark .flow-log-pre {
+  color: #e3e3e8;
+}
+
+.flow-log-step.failed .flow-log-pre {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.flow-log-step.missing .flow-log-pre {
+  color: var(--text-secondary);
+  opacity: 0.95;
+  font-style: italic;
+}
+
+.flow-log-error {
+  flex: 1;
+  min-height: 80px;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+  color: #f87171;
+  font-size: 11px;
+  line-height: 1.4;
   overflow: auto;
 }
 
-.gds-chip-diagram {
-  background: var(--bg-primary);
-  border: 2px solid var(--border-color);
-  border-radius: 8px;
-  padding: 12px;
-  min-width: 280px;
-  max-width: 420px;
-  width: 100%;
-}
-
-.gds-title {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 8px;
-}
-
-.gds-blocks-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-}
-
-.gds-block {
-  padding: 8px 6px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  text-align: center;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  transition: all 0.15s ease;
-}
-
-.gds-block:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
-}
-
-.gds-block.core {
-  grid-column: 1 / 3;
-  grid-row: 1 / 3;
+.flow-log-placeholder {
+  flex: 1;
+  min-height: 120px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(var(--accent-rgb, 59, 130, 246), 0.08);
-  border-color: var(--accent-color);
-  color: var(--accent-color);
-  font-size: 11px;
-}
-
-.gds-block.rcu {
-  grid-column: 3 / 5;
-}
-
-.gds-block.bus-row {
-  grid-column: 1 / 5;
-  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  padding: 16px;
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
 }
 
-.gds-bus-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent-color);
+.flow-log-placeholder i {
+  font-size: 28px;
+  color: var(--text-secondary);
+  opacity: 0.35;
+}
+
+.flow-log-placeholder p {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.flow-log-placeholder span {
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.65;
+  text-align: center;
+  max-width: 260px;
 }
 
 /* ==================== Checklist Table ==================== */

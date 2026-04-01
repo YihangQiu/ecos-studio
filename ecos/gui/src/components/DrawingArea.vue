@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef, markRaw, watch } from 'vue'
+import { shallowRef, markRaw, watch, ref, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { EditorContainer, type Editor } from '@/applications/editor'
 import {
@@ -29,6 +29,55 @@ const { getResourceUrl } = useEDA()
 const layoutState = useLayoutState()
 
 const editor = shallowRef<Editor | null>(null)
+
+/** 鼠标在画布上时的 EDA/显示坐标（屏幕 → 世界 → display，与标尺一致） */
+const cursorEda = ref<{ x: number; y: number } | null>(null)
+
+let detachCanvasPointerListeners: (() => void) | null = null
+
+function formatCursorCoord(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  return Math.round(n).toLocaleString()
+}
+
+function attachCanvasPointerTracking(ed: Editor): void {
+  detachCanvasPointerListeners?.()
+  const canvas = ed.application?.canvas as HTMLCanvasElement | undefined
+  const vp = ed.view
+  if (!canvas || !vp) return
+
+  const onMove = (e: PointerEvent): void => {
+    const world = vp.toWorld(e.offsetX, e.offsetY)
+    const d = ed.worldToDisplay(world.x, world.y)
+    cursorEda.value = { x: d.x, y: d.y }
+  }
+  const onLeave = (): void => {
+    cursorEda.value = null
+  }
+
+  canvas.addEventListener('pointermove', onMove)
+  canvas.addEventListener('pointerleave', onLeave)
+
+  detachCanvasPointerListeners = () => {
+    canvas.removeEventListener('pointermove', onMove)
+    canvas.removeEventListener('pointerleave', onLeave)
+    detachCanvasPointerListeners = null
+  }
+}
+
+watch(
+  () => editor.value,
+  (ed) => {
+    detachCanvasPointerListeners?.()
+    cursorEda.value = null
+    if (ed) attachCanvasPointerTracking(ed)
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  detachCanvasPointerListeners?.()
+})
 
 // Layout modules (not reactive — managed imperatively)
 let dataStore: LayoutDataStore | null = null
@@ -148,7 +197,7 @@ async function loadLayoutData(headerJson: RawHeaderJSON, dataJson: RawDataJSON):
       layoutState.layerManager.value = markRaw(layerMgrPlugin)
     }
 
-    // 7. Update world bounds and fit to die area
+    // 7. 世界范围 + 缩放适配 die，左下角对齐标尺原点 (X=0、Y 显示 0)，不要用 moveCenter 居中（会抵消 align）
     const dieArea = dataStore.dieArea
     if (dieArea && dieArea.width > 0) {
       ed.setWorldBounds(dieArea.width, dieArea.height)
@@ -159,7 +208,7 @@ async function loadLayoutData(headerJson: RawHeaderJSON, dataJson: RawDataJSON):
       const sh = ed.size.height - padding * 2
       const scale = Math.min(sw / dieArea.width, sh / dieArea.height)
       vp.scale.set(scale)
-      vp.moveCenter(dieArea.x + dieArea.width / 2, dieArea.y + dieArea.height / 2)
+      ed.alignViewportToRulerOrigin()
     }
 
     const elapsed = performance.now() - t0
@@ -301,12 +350,24 @@ watch(stepRefreshCounter, () => {
         Load error: {{ layoutState.loadingMessage.value }}
       </div>
 
-      <!-- Mode indicator -->
+      <!-- 鼠标 EDA 坐标（屏幕 → 世界 → 显示） -->
       <div
-        v-if="layoutState.renderMode.value === 'layout'"
-        class="absolute top-2 right-2 px-2 py-1 bg-green-900/60 text-green-300 text-[10px] rounded z-10"
+        class="absolute top-2 right-2 z-20 flex flex-col items-end gap-1 pointer-events-none"
       >
-        Layout Mode
+        <div
+          v-if="cursorEda"
+          class="rounded border border-(--border-color) bg-(--bg-primary)/90 px-2 py-1 font-mono text-[11px] text-(--text-primary) tabular-nums shadow-sm"
+          title="EDA / 显示坐标（左下原点，Y 向上，与标尺一致）"
+        >
+          <span class="text-(--text-secondary)">X</span> {{ formatCursorCoord(cursorEda.x) }}
+          <span class="ml-2 text-(--text-secondary)">Y</span> {{ formatCursorCoord(cursorEda.y) }}
+        </div>
+        <div
+          v-if="layoutState.renderMode.value === 'layout'"
+          class="px-2 py-1 bg-green-900/60 text-green-300 text-[10px] rounded"
+        >
+          Layout Mode
+        </div>
       </div>
     </div>
   </div>

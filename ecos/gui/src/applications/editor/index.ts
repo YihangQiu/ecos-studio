@@ -5,6 +5,14 @@ import { RulerPlugin, SelectPlugin, HighlightPlugin, MeasurePlugin, LayerManager
 export { Editor }
 export type { EditorOptions } from './core/Editor'
 
+// 显示坐标 ↔ 世界坐标（与标尺一致）
+export {
+  worldPointFromDisplay,
+  displayPointFromWorld,
+  worldTopLeftFromDisplayBottomLeft
+} from './core/editorCoordinates'
+export type { Vec2 } from './core/editorCoordinates'
+
 // 导出主题
 export { themes, lightTheme, darkTheme } from './core/Theme'
 export type { EditorTheme, ThemeName } from './core/Theme'

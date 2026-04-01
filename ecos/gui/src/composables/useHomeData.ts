@@ -46,6 +46,18 @@ export interface AnalysisChartItem {
   imageBlobUrl: string
 }
 
+/** Home 页聚合展示的单个 flow 步骤日志块 */
+export interface FlowLogSegment {
+  stepName: string
+  tool: string
+  state: string
+  /** flow.json 中为 Incomplete / Invalid */
+  failed: boolean
+  /** 磁盘上不存在或无法读取 */
+  missing: boolean
+  content: string
+}
+
 // ============ 共享 HomeData 缓存（模块级单例） ============
 
 /**
@@ -64,6 +76,13 @@ export function convertRemoteToLocalPath(remotePath: string, projectPath: string
 
   const relativePath = remotePath.slice(idx + projectName.length + 2)
   return `${projectPath}/${relativePath}`
+}
+
+/** 从 flow.json 路径解析 workspace 根目录（…/home/flow.json → …） */
+export function workspaceRootFromFlowPath(flowJsonPath: string): string {
+  const n = flowJsonPath.replace(/\\/g, '/')
+  const m = n.match(/^(.*)\/home\/flow\.json$/i)
+  return m ? m[1] : ''
 }
 
 /** 共享的 home.json 解析结果 */
@@ -167,6 +186,9 @@ export function useHomeData() {
   const checklistItems = ref<ChecklistItem[]>([])
   const layoutBlobUrl = ref<string>('')
   const analysisCharts = ref<AnalysisChartItem[]>([])
+  const flowLogSegments = ref<FlowLogSegment[]>([])
+  const flowLogStepName = ref('')
+  const flowLogError = ref<string | null>(null)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
 
@@ -355,6 +377,88 @@ export function useHomeData() {
     }
   }
 
+  async function loadAllFlowStepLogsFromFlowPath(flowPathRemote: string): Promise<void> {
+    if (!isInTauri || !flowPathRemote) {
+      flowLogSegments.value = []
+      return
+    }
+
+    flowLogError.value = null
+
+    try {
+      const projectPath = currentProject.value?.path
+      if (projectPath) {
+        await requestPermission(projectPath)
+      }
+
+      const flowLocal = convertToLocalPath(flowPathRemote)
+      const workspaceRoot = workspaceRootFromFlowPath(flowLocal)
+      if (!workspaceRoot) {
+        flowLogError.value = 'Cannot resolve workspace root from flow.json path'
+        flowLogSegments.value = []
+        return
+      }
+
+      const fileContent = await readTextFile(flowLocal)
+      const flowData = JSON.parse(fileContent) as { steps?: Array<{ name: string; tool: string; state: string }> }
+      const steps = flowData.steps ?? []
+
+      const root = workspaceRoot.replace(/\\/g, '/')
+      const segments: FlowLogSegment[] = []
+      for (const step of steps) {
+        // Unstart / Ongoing：不读盘、不展示该步（避免「文件不存在」或多余进行中块）
+        const stateNorm = (step.state ?? '').trim()
+        const stateLc = stateNorm.toLowerCase()
+        if (stateLc === 'unstart' || stateLc === 'ongoing') {
+          continue
+        }
+
+        const failed = step.state === 'Incomplete' || step.state === 'Invalid'
+
+        const logPath = `${root}/${step.name}_${step.tool}/log/${step.name}.log`
+
+        let content = ''
+        let missing = false
+        try {
+          content = await readTextFile(logPath)
+        } catch {
+          missing = true
+          content = `(Log file not found or unreadable)\n${logPath}`
+        }
+
+        segments.push({
+          stepName: step.name,
+          tool: step.tool,
+          state: step.state,
+          failed,
+          missing,
+          content,
+        })
+      }
+
+      flowLogSegments.value = segments
+      console.log('Flow step logs loaded:', segments.length, 'segments')
+    } catch (err) {
+      console.error('Failed to load flow step logs:', err)
+      flowLogSegments.value = []
+      flowLogError.value = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  /**
+   * 在已有 home 数据或共享缓存的前提下，按 flow.json 拉取全部步骤日志（含失败步骤，失败段标红）
+   */
+  async function ensureFlowLogsLoaded(): Promise<void> {
+    let flowPath = sharedHomeData.value?.flow
+    if (!flowPath && isInTauri && currentProject.value?.path) {
+      const homeData = await fetchSharedHomeData(currentProject.value.path, isInTauri)
+      flowPath = homeData?.flow ?? ''
+    }
+    if (flowPath) {
+      await loadAllFlowStepLogsFromFlowPath(flowPath)
+    }
+  }
+
   /**
    * 从 home.json 加载所有 Home 页面数据
    * 使用共享缓存避免重复 API 调用
@@ -386,11 +490,12 @@ export function useHomeData() {
         monitorData.value = homeData.monitor
       }
 
-      // 并行加载 checklist、layout 和 metrics 图片
+      // 并行加载 checklist、layout、metrics 与各步骤日志
       await Promise.all([
         loadChecklist(homeData.checklist),
         loadLayoutImage(homeData.layout),
         loadMetricsImages(homeData.metrics),
+        loadAllFlowStepLogsFromFlowPath(homeData.flow),
       ])
 
       console.log('Home data fully loaded')
@@ -440,11 +545,12 @@ export function useHomeData() {
         monitorData.value = homeData.monitor
       }
 
-      // 并行加载 checklist、layout 和 metrics 图片
+      // 并行加载 checklist、layout、metrics 与各步骤日志
       await Promise.all([
         loadChecklist(homeData.checklist),
         loadLayoutImage(homeData.layout),
         loadMetricsImages(homeData.metrics),
+        loadAllFlowStepLogsFromFlowPath(homeData.flow),
       ])
 
       console.log('Home data from SSE path fully loaded')
@@ -469,6 +575,9 @@ export function useHomeData() {
   function clearHomeData(): void {
     monitorData.value = null
     checklistItems.value = []
+    flowLogSegments.value = []
+    flowLogStepName.value = ''
+    flowLogError.value = null
     cleanupBlobUrl()
     cleanupMetricsBlobUrls()
     error.value = null
@@ -503,15 +612,30 @@ export function useHomeData() {
       // 判断是否为 notify 类型的消息
       if (latest.cmd !== 'notify') return
 
-      // 提取 home_page 路径（step 通知和 subflow 通知都可能包含）
       const info = latest.data?.info as Record<string, unknown> | undefined
       const homePage = info?.home_page as string | undefined
-      if (!homePage) return
+      const logFile = info?.log_file as string | undefined
+      const stepName = latest.data?.step as string | undefined
 
-      console.log('Received SSE notification containing home_page path:', homePage)
+      if (!homePage && !logFile) return
 
-      // 从 home_page 路径重新加载 Home 数据
-      await loadHomeDataFromPath(homePage)
+      if (homePage) {
+        console.log('Received SSE notification containing home_page path:', homePage)
+      }
+      if (logFile) {
+        console.log('Received SSE notification containing log_file path:', logFile)
+      }
+
+      if (homePage) {
+        await loadHomeDataFromPath(homePage)
+      }
+      if (stepName !== undefined && logFile) {
+        flowLogStepName.value = stepName
+      }
+      // 仅 log_file、无 home_page 时仍按 flow.json 聚合刷新（例如某步刚跑完）
+      if (logFile && !homePage) {
+        await ensureFlowLogsLoaded()
+      }
     }
   )
 
@@ -536,6 +660,9 @@ export function useHomeData() {
     checklistItems,
     layoutBlobUrl,
     analysisCharts,
+    flowLogSegments,
+    flowLogStepName,
+    flowLogError,
     isLoading,
     error,
 
@@ -545,5 +672,7 @@ export function useHomeData() {
     refreshHomeData,
     clearHomeData,
     convertToLocalPath,
+    loadAllFlowStepLogsFromFlowPath,
+    ensureFlowLogsLoaded,
   }
 }

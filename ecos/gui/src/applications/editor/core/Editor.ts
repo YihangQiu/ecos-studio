@@ -2,6 +2,8 @@ import { Application, Container, Sprite, Assets, Texture } from 'pixi.js'
 import { Viewport } from 'pixi-viewport'
 import type { IPlugin, ViewportTransform } from '../plugins/IPlugin'
 import { themes, darkTheme, type EditorTheme, type ThemeName } from './Theme'
+import { RULER_THICKNESS } from './rulerConfig'
+import { worldPointFromDisplay, displayPointFromWorld } from './editorCoordinates'
 
 export interface EditorOptions {
   /** 世界宽度 (默认 4000) */
@@ -39,6 +41,9 @@ export class Editor {
   /** 当前背景图的 blob URL，用于清理 */
   private currentBlobUrl: string | null = null
 
+  /** 上次 resize 时的屏幕尺寸，用于在窗口尺寸变化时平移视口以保持世界坐标一致 */
+  private _screenSizeForResize: { w: number; h: number } | null = null
+
   /** 防抖延迟时间 (ms) */
   private static readonly RESIZE_DEBOUNCE_DELAY = 16 // ~60fps
 
@@ -73,6 +78,30 @@ export class Editor {
       width: this.app?.screen.width ?? 0,
       height: this.app?.screen.height ?? 0
     }
+  }
+
+  /** 世界宽度（与 viewport 一致，可被 setWorldBounds 更新） */
+  get worldWidth(): number {
+    return this.options.worldWidth
+  }
+
+  /** 世界高度（与 viewport 一致，可被 setWorldBounds 更新） */
+  get worldHeight(): number {
+    return this.options.worldHeight
+  }
+
+  /**
+   * 显示/EDA 坐标（左下为原点、Y 向上，与标尺一致）→ Pixi 世界坐标（点）
+   */
+  public displayToWorld(displayX: number, displayY: number): { x: number; y: number } {
+    return worldPointFromDisplay(displayX, displayY, this.options.worldHeight)
+  }
+
+  /**
+   * Pixi 世界坐标 → 显示/EDA 坐标（左下为原点、Y 向上）
+   */
+  public worldToDisplay(worldX: number, worldY: number): { x: number; y: number } {
+    return displayPointFromWorld(worldX, worldY, this.options.worldHeight)
   }
 
   /** 是否已初始化 */
@@ -157,6 +186,9 @@ export class Editor {
     this.resizeObserver.observe(container)
 
     this._initialized = true
+
+    // 视口对齐到标尺原点，使左下角为 X=0、Y 显示 0（与 RulerPlugin 的 worldHeight - worldY 一致）
+    this.alignViewportToRulerOrigin()
 
     // 初始化所有已注册的插件
     for (const plugin of this.plugins) {
@@ -299,31 +331,26 @@ export class Editor {
       sh / this.options.worldHeight
     )
 
-    this.viewport.setZoom(scale, true)
-    this.viewport.moveCenter(
-      this.options.worldWidth / 2,
-      this.options.worldHeight / 2
-    )
+    this.viewport.setZoom(scale, false)
+    this.alignViewportToRulerOrigin()
 
     this.notifyViewportChange()
     return this
   }
 
-  /** 
-   * 适应当前背景图片，使其在编辑器中居中显示
+  /**
+   * 适应当前背景图：按留白完整显示图片，并与标尺一致使左下角为显示 Y=0（通过 alignViewportToRulerOrigin）
    * @param padding 四周留白（像素）
    */
   public fit(padding = 10): this {
     if (!this.viewport || !this.app || !this.backgroundContainer) return this
 
-    // 获取背景容器中的第一个子元素（背景图片 Sprite）
     const backgroundSprite = this.backgroundContainer.children[0] as Sprite
     if (!backgroundSprite) {
       console.warn('No background image to fit')
       return this
     }
 
-    // 获取图片的原始尺寸（从纹理获取，不受transform影响）
     const texture = backgroundSprite.texture
     const imgWidth = texture.width
     const imgHeight = texture.height
@@ -333,41 +360,18 @@ export class Editor {
       return this
     }
 
-    // 获取屏幕尺寸（减去边距）
+    this.setWorldBounds(imgWidth, imgHeight)
+
     const screenWidth = this.app.screen.width - padding * 2
     const screenHeight = this.app.screen.height - padding * 2
 
-    // 计算缩放比例：选择能完整显示图片的最大缩放比例
     const scale = Math.min(
       screenWidth / imgWidth,
       screenHeight / imgHeight
     )
 
-    console.log('Fitting image:', {
-      imageSize: { width: imgWidth, height: imgHeight },
-      screenSize: {
-        width: this.app.screen.width,
-        height: this.app.screen.height,
-        withPadding: { width: screenWidth, height: screenHeight }
-      },
-      padding,
-      calculatedScale: scale,
-      currentScale: this.viewport.scale.x
-    })
-
-    // 重置视图位置和缩放
     this.viewport.scale.set(scale)
-    this.viewport.position.set(0, 0)
-
-    // 将视图中心移动到图片中心
-    this.viewport.moveCenter(imgWidth / 2, imgHeight / 2)
-
-    console.log('After fit:', {
-      viewportScale: this.viewport.scale.x,
-      viewportPosition: { x: this.viewport.x, y: this.viewport.y },
-      viewportCenter: this.viewport.center
-    })
-
+    this.alignViewportToRulerOrigin()
     this.notifyViewportChange()
     return this
   }
@@ -439,7 +443,6 @@ export class Editor {
         texture.source.style.minFilter = 'linear'
         texture.source.style.mipmapFilter = 'linear'
         texture.source.style.magFilter = 'nearest'
-        console.log('Created texture from blob URL:', texture);
       } else {
         // 对于其他 URL，使用 Assets.load
         texture = await Assets.load(url)
@@ -450,13 +453,20 @@ export class Editor {
         texture.source.style.minFilter = 'linear'
         texture.source.style.mipmapFilter = 'linear'
         texture.source.style.magFilter = 'nearest'
-        console.log('Loaded texture from asset URL:', texture);
       }
 
-      // 4. 创建 sprite
+      const imgW = texture.width
+      const imgH = texture.height
+      if (imgW === 0 || imgH === 0) {
+        throw new Error('Background texture has zero dimensions')
+      }
+
+      // 世界范围与图素一致；垂直标尺在 displayY 网格上取样，无需再靠「补 0 刻度」
+      this.setWorldBounds(imgW, imgH)
+
+      // 4. 精灵左上 (0,0)：世界高=图高时，图底边即 worldY=worldHeight，对应显示 Y=0
       const sprite = new Sprite(texture)
-      sprite.position.set(0, 0) // 设置位置为原点
-      console.log('Created sprite, size:', sprite.width, 'x', sprite.height);
+      sprite.position.set(0, 0)
 
       // 5. 添加到容器
       this.backgroundContainer.addChild(sprite)
@@ -468,7 +478,6 @@ export class Editor {
         this.currentBlobUrl = null
       }
 
-      console.log('Background image updated successfully')
 
       // 7. 等待下一帧，确保 sprite 已经完全渲染
       await new Promise(resolve => requestAnimationFrame(resolve))
@@ -540,6 +549,29 @@ export class Editor {
     }
 
     this._initialized = false
+    this._screenSizeForResize = null
+  }
+
+  /**
+   * 将视口对齐为：绘图区左下角（世界 x=0、世界 y=worldHeight）落在标尺与画布交界处，
+   * 使标尺左下角 X 与 Y 读数均为 0（与 RulerPlugin 的 worldHeight - worldY 一致）。
+   * 在 setWorldBounds / 缩放之后调用，或在布局加载后替代 moveCenter。
+   */
+  public alignViewportToRulerOrigin(): this {
+    if (!this.viewport || !this.app) return this
+    const scale = this.viewport.scale.x
+    const sh = this.app.screen.height
+    const wh = this.options.worldHeight
+    this.viewport.position.set(
+      RULER_THICKNESS,
+      (sh - RULER_THICKNESS) - wh * scale
+    )
+    this.viewport.plugins.reset()
+    this._screenSizeForResize = {
+      w: this.app.screen.width,
+      h: this.app.screen.height
+    }
+    return this
   }
 
   /** 处理容器尺寸变化 */
@@ -549,10 +581,20 @@ export class Editor {
     this.app.renderer.resize(width, height)
     this.viewport.resize(width, height)
 
+    if (this._screenSizeForResize) {
+      this.viewport.x += width - this._screenSizeForResize.w
+      this.viewport.y += height - this._screenSizeForResize.h
+    } else {
+      this.alignViewportToRulerOrigin()
+    }
+    this._screenSizeForResize = { w: width, h: height }
+
     // 通知插件
     for (const plugin of this.plugins) {
       plugin.onResize?.(width, height)
     }
+
+    this.notifyViewportChange()
   }
 
   /** 通知插件 viewport 变化 */

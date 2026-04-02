@@ -21,6 +21,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import argparse
+import logging
 import uvicorn
 
 from chipcompiler.utility.log import (
@@ -41,16 +42,18 @@ def _setup_logging(args) -> str:
     if args.disable_stdio_redirect:
         print("[API_LOG] stdio redirect disabled; logs stay on console.",
               file=sys.stderr, flush=True)
+        logging.getLogger("ecos_server").setLevel(logging.INFO)
         return log_file
-
-    print(f"[API_LOG] log -> {log_file} (tail -f {log_file})",
-          file=sys.stderr, flush=True)
 
     log_file = init_api_runtime_log(
         log_file=log_file,
         max_bytes=args.log_max_bytes,
         backup_count=args.log_backup_count,
     )
+
+    print(f"[API_LOG] log -> {log_file} (tail -f {log_file})",
+          file=sys.stderr, flush=True)
+
     return log_file
 
 
@@ -98,7 +101,8 @@ def main():
 
     print(
         f"[API_START] pid={os.getpid()} {args.host}:{args.port} "
-        f"reload={args.reload} reload_dirs={reload_dirs or 'default'} log={log_file}",
+        f"reload={args.reload} reload_dirs={reload_dirs or 'default'} "
+        f"log={'console' if args.disable_stdio_redirect else log_file}",
         flush=True,
     )
 

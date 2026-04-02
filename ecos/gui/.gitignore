@@ -34,3 +34,6 @@ src-tauri/resources/oss-cad-suite
 .shared/
 
 assets/*.json
+
+.cursor
+openspec/

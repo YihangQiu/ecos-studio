@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex flex-col items-center justify-center h-full w-full text-(--text-primary) relative overflow-hidden">
+    class="flex flex-col items-center justify-center min-h-full w-full text-(--text-primary) relative overflow-y-auto overflow-x-hidden py-8">
 
     <!-- 返回按钮 -->
     <button @click="goBack"
@@ -72,7 +72,7 @@
           <p class="text-xs mt-2 opacity-60">Click "New Workspace" to start your chip design journey</p>
         </div>
 
-        <div v-else class="space-y-2 max-h-[280px] overflow-y-auto scrollbar-thin">
+        <div v-else class="space-y-2">
           <div v-for="project in displayedProjects" :key="project.id"
             class="w-full flex items-center justify-between px-5 py-4 bg-(--bg-secondary) rounded-xl transition-all duration-200 border text-left group"
             :class="project.pathExists === false
@@ -88,9 +88,23 @@
                   : 'ri-folder-line text-lg text-(--accent-color)'"></i>
               </div>
               <div class="flex-1 min-w-0">
-                <p class="font-medium truncate"
-                  :class="project.pathExists === false ? 'text-(--text-secondary)' : 'text-(--text-primary)'">
-                  {{ project.name }}
+                <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <p class="font-medium truncate min-w-0"
+                    :class="project.pathExists === false ? 'text-(--text-secondary)' : 'text-(--text-primary)'">
+                    {{ project.name }}
+                  </p>
+                  <span v-if="project.pdk"
+                    class="text-[10px] px-1.5 py-0.5 rounded bg-(--accent-color)/10 text-(--accent-color) font-medium shrink-0">
+                    {{ project.pdk }}
+                  </span>
+                  <span v-if="project.status" :class="statusBadgeClass(project.status)"
+                    class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0">
+                    {{ statusLabel(project.status) }}
+                  </span>
+                </div>
+                <p v-if="project.completedSteps != null && project.totalSteps"
+                  class="text-[11px] text-(--text-secondary) mt-0.5">
+                  {{ project.completedSteps }}/{{ project.totalSteps }} steps
                 </p>
                 <div class="flex items-center gap-2 mt-0.5">
                   <p class="text-xs text-(--text-secondary) truncate">{{ project.path }}</p>
@@ -128,7 +142,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import type { Project, WorkspaceConfig } from '../types'
+import type { Project, ProjectStatus, WorkspaceConfig } from '../types'
 import NewProjectWizard from '../components/NewProjectWizard.vue'
 import { useWorkspace } from '../composables/useWorkspace'
 
@@ -180,5 +194,27 @@ const formatDate = (date: Date) => {
   if (days < 7) return `${days} days ago`
   if (days < 30) return `${Math.floor(days / 7)} weeks ago`
   return new Date(date).toLocaleDateString('en-US')
+}
+
+function statusBadgeClass(status: ProjectStatus): string {
+  const map: Record<ProjectStatus, string> = {
+    success: 'bg-emerald-500/15 text-emerald-400',
+    failed: 'bg-red-500/15 text-red-400',
+    running: 'bg-blue-500/15 text-blue-400',
+    in_progress: 'bg-amber-500/15 text-amber-400',
+    not_started: 'bg-gray-500/15 text-gray-400',
+  }
+  return map[status] || 'bg-gray-500/15 text-gray-400'
+}
+
+function statusLabel(status: ProjectStatus): string {
+  const map: Record<ProjectStatus, string> = {
+    success: 'Success',
+    failed: 'Failed',
+    running: 'Running',
+    in_progress: 'In Progress',
+    not_started: 'Not Started',
+  }
+  return map[status] || 'Unknown'
 }
 </script>

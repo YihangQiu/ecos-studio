@@ -1153,18 +1153,16 @@ function stateClass(state: string): string {
 /* ==================== 指标分析 ==================== */
 .analysis-content {
   flex: 1;
-  padding: 10px;
+  padding: 8px;
   overflow: auto;
-  min-height: 0;
 }
 
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  grid-auto-rows: minmax(128px, 1fr);
-  gap: 10px;
+  grid-template-rows: 1fr 1fr;
+  gap: 6px;
   height: 100%;
-  min-height: 260px;
 }
 
 /* Last row span adjustment for uneven items */
@@ -1183,21 +1181,16 @@ function stateClass(state: string): string {
 .chart-card {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 6px;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  justify-content: flex-start;
-  gap: 8px;
-  padding: 8px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px;
+  transition: border-color 0.15s ease;
   cursor: pointer;
   overflow: hidden;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
-}
-
-html.dark .chart-card {
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .chart-card:hover {
@@ -1210,46 +1203,27 @@ html.dark .chart-card {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 112px;
+  min-height: 0;
   font-size: 28px;
   color: var(--text-secondary);
   opacity: 0.25;
-  /* 浅色 PNG 在深色卡片内用衬底收边，避免整块发白刺眼 */
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 6px 8px;
 }
 
 .chart-visual img.chart-image {
   width: 100%;
   height: 100%;
-  min-height: 96px;
   object-fit: contain;
   display: block;
   opacity: 1;
-  border-radius: 4px;
-  background: #f3f4f6;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
-}
-
-html.dark .chart-visual img.chart-image {
-  background: #eceef2;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
 }
 
 .chart-label {
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 600;
-  line-height: 1.25;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   text-align: center;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
   flex-shrink: 0;
-  letter-spacing: 0.02em;
 }
 
 /* ===== 图表预览 Lightbox ===== */
@@ -1392,7 +1366,6 @@ html.dark .chart-visual img.chart-image {
   color: var(--text-secondary);
   opacity: 0.6;
 }
-
 /* ==================== Flow step log ==================== */
 .flow-log-content {
   flex: 1;

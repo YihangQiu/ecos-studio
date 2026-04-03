@@ -1,4 +1,4 @@
-.PHONY: help setup check-setup build dev gui clean-gui dreamplace-wheel demo-gcd demo-soc demo-retrosoc docker-build docker-verify-all
+.PHONY: help setup check-setup build dev gui clean-gui dreamplace-wheel demo-gcd demo-soc demo-retrosoc docker-build docker-verify-all install-deps
 
 WHEEL_DIR := $(CURDIR)/ecc/dist/wheel/repaired
 BUNDLE_TAR := bazel-bin/ecos/ecos_studio_bundle/ecos_studio_bundle.tar
@@ -13,6 +13,7 @@ RETROSOC_WS ?= ./ws/retrosoc
 
 help:
 	@echo "Targets:"
+	@echo "  make install-deps - Install system dependencies and tools (Node.js, pnpm, Rust, Bazel, uv)"
 	@echo "  make setup      - Init submodules and setup PDK"
 	@echo "  make build      - Build ECOS Studio bundle (Bazel)"
 	@echo "  make dev        - Setup development environment"
@@ -25,9 +26,43 @@ help:
 	@echo "  make docker-build  - Build Docker verification image"
 	@echo "  make docker-verify-all - Run all demos in Docker"
 
-setup:
+install-deps:
+	@. /etc/os-release && \
+	if [ "$$ID" != "ubuntu" ]; then \
+	    echo "Error: install-deps requires Ubuntu (detected: $$ID)"; \
+	    exit 1; \
+	fi
+	@echo "==> Installing apt dependencies..."
+	sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+	    git curl ca-certificates build-essential pkg-config \
+	    python3 python3-venv python3-pip python3-dev \
+	    libgtk-3-dev libgtk-3-bin libwebkit2gtk-4.1-dev \
+	    libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev \
+	    libglib2.0-dev libglib2.0-bin librsvg2-dev \
+	    cmake ninja-build tcl-dev \
+	    libgflags-dev libgoogle-glog-dev libboost-all-dev libgtest-dev \
+	    flex libeigen3-dev libunwind-dev libmetis-dev libgmp-dev bison \
+	    libhwloc-dev libcurl4-openssl-dev libtbb-dev \
+	    patchelf jq wget
+	@echo "==> Installing Node.js (LTS)..."
+	curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo bash -
+	sudo apt-get install -y nodejs && sudo rm -rf /var/lib/apt/lists/*
+	@echo "==> Installing pnpm..."
+	npm install -g --prefix ~/.local pnpm
+	@echo "==> Installing Rust..."
+	curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path
+	@echo "==> Installing Bazel 8.5.0..."
+	mkdir -p ~/.local/bin
+	wget https://github.com/bazelbuild/bazel/releases/download/8.5.0/bazel-8.5.0-linux-x86_64 \
+	    -O ~/.local/bin/bazel && chmod +x ~/.local/bin/bazel
+	@echo "==> Installing uv..."
+	curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh
+	@echo ""
+	@echo "Done. Ensure the following are in your PATH (add to ~/.bashrc or ~/.zshrc):"
+	@echo '  export PATH="$$HOME/.local/bin:$$HOME/.cargo/bin:$$PATH"'
+
+setup: install-deps
 	git submodule update --init --recursive
-	$(MAKE) -C pdk/icsprout55-pdk unzip
 	cd ecc && bazel run //:prepare_dev
 	@touch .setup-done
 

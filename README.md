@@ -33,7 +33,11 @@ Enabling mainstream manufacturing processes.
 
 **Note:** This is the initial release of ECOS Studio components. We are starting by providing these foundational open-source tools to the community. More subprojects and advanced features will be added in the future. Please stay tuned for updates!
 
-## Quick Start
+## Download
+
+- [ECOS-Studio v0.1.0-alpha.1 AppImage (amd64)](https://github.com/0xharry/ecos-studio/releases/download/v0.1.0-alpha.1/ECOS-Studio_0.1.0_amd64.AppImage)
+
+## Quick Start (For Developers)
 
 ```bash
 # Setup (init submodules, PDK, and ECC environment)

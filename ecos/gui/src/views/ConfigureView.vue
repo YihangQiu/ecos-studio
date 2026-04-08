@@ -190,6 +190,16 @@ const toggleSection = (key: keyof typeof expandedSections) => {
                 <InputNumber v-model="config.globalRightPadding" size="small" :min="0" />
               </div>
             </div>
+            <div class="field-row">
+              <div class="field">
+                <label>Cell padding X</label>
+                <InputNumber v-model="config.cellPaddingX" size="small" :min="0" />
+              </div>
+              <div class="field">
+                <label>Routability optimization</label>
+                <Checkbox v-model="config.routabilityOptFlag" :binary="true" />
+              </div>
+            </div>
             <div class="field">
               <div class="label-row">
                 <label>Target Density</label>

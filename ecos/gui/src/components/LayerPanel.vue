@@ -1,99 +1,36 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
-import type { LayerManagerPlugin, LayerPanelItem } from '@/applications/editor/plugins/LayerManagerPlugin'
-import type { LayerTexturePattern } from '@/applications/editor/layout/LayerStyleManager'
+import { computed } from 'vue'
+import { useLayoutState } from '@/composables/useLayoutState'
 
-interface Props {
-  layerManager: LayerManagerPlugin | null
+const layoutState = useLayoutState()
+
+const layers = computed(() => layoutState.tileLayers.value)
+const actions = computed(() => layoutState.tileLayerActions.value)
+
+const visibleCount = computed(() => layers.value.filter(l => l.visible).length)
+
+function toggle(id: number): void {
+  actions.value?.toggleLayer(id)
 }
 
-const props = defineProps<Props>()
-
-const layers = ref<LayerPanelItem[]>([])
-let unlisten: (() => void) | null = null
-
-function refresh() {
-  if (props.layerManager) {
-    layers.value = props.layerManager.getLayerItems()
-  }
+function showAll(): void {
+  actions.value?.showAll()
 }
 
-watch(() => props.layerManager, (mgr) => {
-  if (unlisten) { unlisten(); unlisten = null }
-  if (mgr) {
-    unlisten = mgr.onChange(() => refresh())
-    refresh()
-  }
-}, { immediate: true })
-
-onUnmounted(() => {
-  if (unlisten) unlisten()
-})
-
-const toggleLayer = (id: number) => {
-  props.layerManager?.toggleLayer(id)
-}
-
-const showAll = () => {
-  props.layerManager?.showAllLayers()
-}
-
-const hideAll = () => {
-  props.layerManager?.hideAllLayers()
-}
-
-const setAlpha = (id: number, value: number) => {
-  props.layerManager?.setLayerAlpha(id, value / 100)
-}
-
-function colorToHex(color: number): string {
-  return '#' + color.toString(16).padStart(6, '0')
-}
-
-function hexToNumber(hex: string): number {
-  return parseInt(hex.replace('#', ''), 16)
-}
-
-const onColorChange = (id: number, event: Event) => {
-  const target = event.target as HTMLInputElement
-  props.layerManager?.setLayerColor(id, hexToNumber(target.value))
-}
-
-const texturePatterns: Array<{ value: LayerTexturePattern, label: string }> = [
-  { value: 'diagonal', label: 'Diag' },
-  { value: 'cross', label: 'Cross' },
-  { value: 'dot', label: 'Dot' },
-  { value: 'grid', label: 'Grid' },
-]
-
-const onFillModeChange = (id: number, enabled: boolean) => {
-  props.layerManager?.setLayerFillMode(id, enabled ? 'texture' : 'solid')
-}
-
-const onTexturePatternChange = (id: number, event: Event) => {
-  const target = event.target as HTMLSelectElement
-  props.layerManager?.setLayerTexturePattern(id, target.value as LayerTexturePattern)
-}
-
-const onTextureScaleChange = (id: number, event: Event) => {
-  const target = event.target as HTMLInputElement
-  props.layerManager?.setLayerTextureScale(id, Number(target.value) / 100)
-}
-
-const onTextureAngleChange = (id: number, event: Event) => {
-  const target = event.target as HTMLInputElement
-  props.layerManager?.setLayerTextureAngle(id, Number(target.value))
+function hideAll(): void {
+  actions.value?.hideAll()
 }
 </script>
 
 <template>
   <div class="layer-panel">
     <div class="panel-header">
-      <div class="flex items-center gap-1.5">
+      <div class="header-left">
         <i class="ri-stack-line"></i>
-        <span>Layers</span>
+        <span class="header-en">Layers</span>
+        <span v-if="layers.length" class="layer-count">{{ visibleCount }}/{{ layers.length }}</span>
       </div>
-      <div class="flex items-center gap-1">
+      <div class="header-actions">
         <button @click="showAll" class="header-btn" title="Show All">
           <i class="ri-eye-line text-xs"></i>
         </button>
@@ -103,85 +40,35 @@ const onTextureAngleChange = (id: number, event: Event) => {
       </div>
     </div>
 
-    <div class="layer-list">
-      <div v-for="layer in layers" :key="layer.id" class="layer-item" :class="{ disabled: !layer.hasData }">
-        <div class="layer-item-main">
-          <button
-            class="vis-toggle"
-            :class="{ visible: layer.visible && layer.hasData }"
-            :disabled="!layer.hasData"
-            @click="toggleLayer(layer.id)"
-          >
-            <i :class="layer.visible && layer.hasData ? 'ri-eye-line' : 'ri-eye-off-line'" class="text-xs"></i>
-          </button>
+    <div v-if="layers.length === 0" class="empty-state">
+      尚未加载工艺层：请生成版图瓦片后，此处可开关各层可见性。
+    </div>
 
-          <input
-            v-if="layer.hasData"
-            type="color"
-            :value="colorToHex(layer.fillColor)"
-            @change="onColorChange(layer.id, $event)"
-            class="color-swatch"
-            :title="`${layer.name} color`"
-          />
-          <div v-else class="color-swatch-placeholder"></div>
+    <div v-else class="layer-list">
+      <div
+        v-for="layer in layers"
+        :key="layer.id"
+        class="layer-item"
+        :class="{ hidden: !layer.visible }"
+        @click="toggle(layer.id)"
+      >
+        <button
+          class="vis-toggle"
+          :class="{ visible: layer.visible }"
+          @click.stop="toggle(layer.id)"
+        >
+          <i :class="layer.visible ? 'ri-eye-line' : 'ri-eye-off-line'" class="text-xs"></i>
+        </button>
 
-          <span class="layer-name" :class="{ 'text-muted': !layer.hasData }">{{ layer.name }}</span>
-          <span class="layer-id">{{ layer.id }}</span>
+        <div
+          class="color-swatch"
+          :style="{
+            backgroundColor: layer.color,
+            opacity: layer.visible ? layer.alpha : 0.2,
+          }"
+        ></div>
 
-          <input
-            v-if="layer.hasData"
-            type="range"
-            min="0"
-            max="100"
-            :value="Math.round(layer.fillAlpha * 100)"
-            @input="setAlpha(layer.id, Number(($event.target as HTMLInputElement).value))"
-            class="alpha-slider"
-            :title="`Opacity: ${Math.round(layer.fillAlpha * 100)}%`"
-          />
-          <span v-else class="no-data-label">no data</span>
-        </div>
-
-        <div v-if="layer.hasData" class="texture-row">
-          <label class="texture-toggle">
-            <input
-              type="checkbox"
-              :checked="layer.fillMode === 'texture'"
-              @change="onFillModeChange(layer.id, ($event.target as HTMLInputElement).checked)"
-            />
-            <span>Texture</span>
-          </label>
-
-          <select
-            class="texture-select"
-            :disabled="layer.fillMode !== 'texture'"
-            :value="layer.texturePattern"
-            @change="onTexturePatternChange(layer.id, $event)"
-          >
-            <option v-for="item in texturePatterns" :key="item.value" :value="item.value">{{ item.label }}</option>
-          </select>
-
-          <input
-            class="texture-slider"
-            type="range"
-            min="20"
-            max="300"
-            :disabled="layer.fillMode !== 'texture'"
-            :value="Math.round(layer.textureScale * 100)"
-            @input="onTextureScaleChange(layer.id, $event)"
-            :title="`Scale: ${layer.textureScale.toFixed(2)}x`"
-          />
-
-          <input
-            class="texture-angle"
-            type="number"
-            min="0"
-            max="360"
-            :disabled="layer.fillMode !== 'texture'"
-            :value="Math.round(layer.textureAngle)"
-            @input="onTextureAngleChange(layer.id, $event)"
-            title="Texture angle"
-          />
-        </div>
+        <span class="layer-name">{{ layer.name }}</span>
       </div>
     </div>
   </div>
@@ -210,6 +97,34 @@ const onTextureAngleChange = (id: number, event: Event) => {
   color: var(--text-secondary);
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-en {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary, #666);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.layer-count {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-tertiary, #666);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .header-btn {
   padding: 2px 6px;
   border-radius: 3px;
@@ -221,6 +136,13 @@ const onTextureAngleChange = (id: number, event: Event) => {
   color: var(--text-primary);
 }
 
+.empty-state {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-tertiary, #666);
+  font-size: 12px;
+}
+
 .layer-list {
   overflow-y: auto;
   flex: 1;
@@ -229,21 +151,17 @@ const onTextureAngleChange = (id: number, event: Event) => {
 
 .layer-item {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 5px 10px;
-  transition: background 0.1s;
-}
-
-.layer-item-main {
-  display: flex;
   align-items: center;
   gap: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
 }
-.layer-item:hover:not(.disabled) {
+.layer-item:hover {
   background: var(--bg-hover);
 }
-.layer-item.disabled {
+.layer-item.hidden {
   opacity: 0.45;
 }
 
@@ -258,7 +176,7 @@ const onTextureAngleChange = (id: number, event: Event) => {
   flex-shrink: 0;
   transition: all 0.15s;
 }
-.vis-toggle:not(:disabled):hover {
+.vis-toggle:hover {
   background: var(--bg-hover);
 }
 .vis-toggle.visible {
@@ -266,100 +184,72 @@ const onTextureAngleChange = (id: number, event: Event) => {
 }
 
 .color-swatch {
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--border-color);
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 2px;
-  padding: 0;
-  cursor: pointer;
   flex-shrink: 0;
-  -webkit-appearance: none;
-  appearance: none;
-}
-.color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
-.color-swatch::-webkit-color-swatch { border: none; border-radius: 1px; }
-
-.color-swatch-placeholder {
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 2px;
-  background: var(--bg-primary);
-  flex-shrink: 0;
-  opacity: 0.3;
+  transition: opacity 0.15s;
 }
 
 .layer-name {
   flex: 1;
   font-weight: 500;
   white-space: nowrap;
-}
-.layer-name.text-muted {
-  color: var(--text-tertiary, #555);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.3px;
 }
 
-.layer-id {
+.layer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
   color: var(--text-tertiary, #555);
-  font-size: 10px;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.expand-btn {
   width: 18px;
-  text-align: right;
+  height: 18px;
+  display: flex;
+  gap: 6px;
   flex-shrink: 0;
 }
+.expand-btn:hover {
+  color: var(--text-primary);
+}
+.expand-btn.expanded {
+  transform: rotate(180deg);
+}
 
-.alpha-slider {
+.pattern-controls {
+  padding: 4px 10px 8px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ctrl-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ctrl-label {
   width: 48px;
-  height: 4px;
-  flex-shrink: 0;
-  accent-color: var(--accent-color);
-  cursor: pointer;
+  font-size: 10px;
+  width: 28px;
+  text-align: right;
 }
 
-.no-data-label {
+.layer-zorder {
   color: var(--text-tertiary, #555);
   font-size: 10px;
-  font-style: italic;
-  white-space: nowrap;
-}
-
-.texture-row {
-  display: grid;
-  grid-template-columns: auto 1fr 1fr 52px;
-  gap: 6px;
-  align-items: center;
-  padding-left: 28px;
-}
-
-.texture-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: var(--text-secondary);
-}
-
-.texture-select {
-  height: 22px;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 10px;
-  padding: 0 6px;
-}
-
-.texture-slider {
-  height: 4px;
-  accent-color: var(--accent-color);
-}
-
-.texture-angle {
-  width: 52px;
-  height: 22px;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 10px;
-  padding: 0 4px;
+  width: 22px;
+  text-align: right;
+  font-family: 'SF Mono', 'Fira Code', monospace;
 }
 </style>

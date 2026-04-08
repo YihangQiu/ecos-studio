@@ -19,6 +19,16 @@
     "core:window:allow-start-dragging",
     "shell:allow-open",
     "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "ecos-gen-mock-tiles",
+          "cmd": "npx",
+          "args": true
+        }
+      ]
+    },
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
@@ -33,7 +43,13 @@
     "fs:allow-read-text-file",
     "fs:allow-write-file",
     "fs:allow-write-text-file",
-    "fs:scope",
+    "fs:allow-mkdir",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$HOME/**"
+      ]
+    },
     "core:image:default"
   ]
 }

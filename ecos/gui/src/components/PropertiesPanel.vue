@@ -1,76 +1,51 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { LayoutGroup, LayoutDataStore } from '@/applications/editor/layout'
-import { GroupType, formatMicron } from '@/applications/editor/layout'
+import { useLayoutState } from '@/composables/useLayoutState'
+import { GLOBAL_SHAPE_TYPE } from '@/applications/editor/tile/manifest'
 
-interface Props {
-  selectedGroups: LayoutGroup[]
-  dataStore: LayoutDataStore | null
+const layoutState = useLayoutState()
+
+const sel = computed(() => layoutState.tileSelection.value)
+const isEmpty = computed(() => !sel.value)
+const isInstance = computed(() => sel.value?.type === 'instance')
+const isSegment = computed(() => sel.value?.type === 'segment')
+
+const ORIENT_NAMES = ['N', 'S', 'E', 'W', 'FN', 'FS', 'FE', 'FW'] as const
+const GLOBAL_TYPE_NAMES: Record<number, string> = {
+  [GLOBAL_SHAPE_TYPE.POWER_STRIPE]:  'Power Stripe',
+  [GLOBAL_SHAPE_TYPE.GROUND_STRIPE]: 'Ground Stripe',
+  [GLOBAL_SHAPE_TYPE.IO_PIN]:        'I/O Pin',
+  [GLOBAL_SHAPE_TYPE.BLOCKAGE]:      'Blockage',
 }
 
-const props = defineProps<Props>()
-
-const isSingle = computed(() => props.selectedGroups.length === 1)
-const isMulti = computed(() => props.selectedGroups.length > 1)
-const isEmpty = computed(() => props.selectedGroups.length === 0)
-
-const singleGroup = computed(() =>
-  isSingle.value ? props.selectedGroups[0] : null
-)
-
-const dbuPerMicron = computed(() => props.dataStore?.dbuPerMicron ?? 1000)
-
-const groupLayerNames = computed(() => {
-  if (!singleGroup.value || !props.dataStore) return []
-  const layers = new Set<number>()
-  for (const box of singleGroup.value.children) {
-    layers.add(box.layer)
-  }
-  return Array.from(layers)
-    .sort((a, b) => a - b)
-    .map((id) => props.dataStore!.getLayerName(id))
+const orientLabel = computed(() => {
+  const o = sel.value?.orient
+  return o != null ? (ORIENT_NAMES[o] ?? String(o)) : null
 })
 
-const groupTypeLabel = computed(() => {
-  if (!singleGroup.value) return ''
-  switch (singleGroup.value.groupType) {
-    case GroupType.Cell: return 'Cell'
-    case GroupType.PowerNet: return 'Power Net'
-    case GroupType.SignalNet: return 'Signal Net'
-    default: return 'Unknown'
-  }
+const globalTypeLabel = computed(() => {
+  const t = sel.value?.globalType
+  return t != null ? (GLOBAL_TYPE_NAMES[t] ?? 'Unknown') : null
 })
 
-const bboxInfo = computed(() => {
-  if (!singleGroup.value) return null
-  const b = singleGroup.value.bbox
-  const d = dbuPerMicron.value
-  return {
-    x: b.x,
-    y: b.y,
-    w: b.width,
-    h: b.height,
-    xUm: formatMicron(b.x, d),
-    yUm: formatMicron(b.y, d),
-    wUm: formatMicron(b.width, d),
-    hUm: formatMicron(b.height, d),
-  }
+const DIRECTION_NAMES: Record<number, string> = { 0: 'Horizontal', 1: 'Vertical', 2: 'Mixed' }
+const directionLabel = computed(() => {
+  const d = sel.value?.direction
+  return d != null ? (DIRECTION_NAMES[d] ?? String(d)) : null
 })
 
-// Multi-select stats
-const multiStats = computed(() => {
-  if (!isMulti.value) return null
-  const counts = new Map<GroupType, number>()
-  for (const g of props.selectedGroups) {
-    counts.set(g.groupType, (counts.get(g.groupType) ?? 0) + 1)
-  }
-  return {
-    total: props.selectedGroups.length,
-    cells: counts.get(GroupType.Cell) ?? 0,
-    powerNets: counts.get(GroupType.PowerNet) ?? 0,
-    signalNets: counts.get(GroupType.SignalNet) ?? 0,
-  }
-})
+function formatDbu(dbu: number): string {
+  const d = layoutState.tileDbuPerMicron.value
+  return (dbu / d).toFixed(3)
+}
+
+function handleClear(): void {
+  layoutState.tileActions.value?.clearSelection()
+}
+
+function handleFitToView(): void {
+  layoutState.tileActions.value?.fitToView()
+}
 </script>
 
 <template>
@@ -84,65 +59,144 @@ const multiStats = computed(() => {
       No element selected
     </div>
 
-    <!-- Single group -->
-    <div v-else-if="isSingle && singleGroup" class="properties-content">
-      <div class="prop-row">
-        <span class="prop-label">Name</span>
-        <span class="prop-value font-mono">{{ singleGroup.structName }}</span>
-      </div>
+    <!-- Instance -->
+    <div v-else-if="sel && isInstance" class="properties-content">
       <div class="prop-row">
         <span class="prop-label">Type</span>
         <span class="prop-value">
-          <span class="type-badge" :class="singleGroup.groupType.toLowerCase()">{{ groupTypeLabel }}</span>
+          <span class="type-badge instance">Instance</span>
         </span>
       </div>
       <div class="prop-row">
-        <span class="prop-label">Children</span>
-        <span class="prop-value">{{ singleGroup.children.length }} boxes</span>
+        <span class="prop-label">Cell ID</span>
+        <span class="prop-value font-mono">{{ sel.cellId }}</span>
       </div>
       <div class="prop-row">
-        <span class="prop-label">Layers</span>
-        <span class="prop-value">{{ groupLayerNames.join(', ') }}</span>
+        <span class="prop-label">Instance ID</span>
+        <span class="prop-value font-mono">{{ sel.instanceId }}</span>
+      </div>
+      <div v-if="sel.layerName" class="prop-row">
+        <span class="prop-label">Hit Layer</span>
+        <span class="prop-value">{{ sel.layerName }}</span>
+      </div>
+      <div v-if="orientLabel" class="prop-row">
+        <span class="prop-label">Orient</span>
+        <span class="prop-value font-mono">{{ orientLabel }}</span>
       </div>
 
-      <div v-if="bboxInfo" class="prop-section">
-        <div class="section-title">Bounding Box</div>
+      <div class="prop-section">
+        <div class="section-title">Position &amp; Size</div>
         <div class="prop-row compact">
-          <span class="prop-label">X</span>
-          <span class="prop-value font-mono">{{ bboxInfo.x }} DBU ({{ bboxInfo.xUm }})</span>
-        </div>
-        <div class="prop-row compact">
-          <span class="prop-label">Y</span>
-          <span class="prop-value font-mono">{{ bboxInfo.y }} DBU ({{ bboxInfo.yUm }})</span>
+          <span class="prop-label">Origin</span>
+          <span class="prop-value font-mono">({{ sel.originX }}, {{ sel.originY }})</span>
         </div>
         <div class="prop-row compact">
           <span class="prop-label">Width</span>
-          <span class="prop-value font-mono">{{ bboxInfo.w }} DBU ({{ bboxInfo.wUm }})</span>
+          <span class="prop-value font-mono">{{ sel.bboxW }} <span class="unit">({{ formatDbu(sel.bboxW) }} μm)</span></span>
         </div>
         <div class="prop-row compact">
           <span class="prop-label">Height</span>
-          <span class="prop-value font-mono">{{ bboxInfo.h }} DBU ({{ bboxInfo.hUm }})</span>
+          <span class="prop-value font-mono">{{ sel.bboxH }} <span class="unit">({{ formatDbu(sel.bboxH) }} μm)</span></span>
         </div>
+      </div>
+
+      <div class="prop-actions">
+        <button class="action-btn fit" @click="handleFitToView">Fit to View</button>
+        <button class="action-btn clear" @click="handleClear">Clear</button>
       </div>
     </div>
 
-    <!-- Multi-select -->
-    <div v-else-if="isMulti && multiStats" class="properties-content">
+    <!-- Routing Segment -->
+    <div v-else-if="sel && isSegment" class="properties-content">
       <div class="prop-row">
-        <span class="prop-label">Selected</span>
-        <span class="prop-value">{{ multiStats.total }} groups</span>
+        <span class="prop-label">Type</span>
+        <span class="prop-value">
+          <span class="type-badge segment">Wire Segment</span>
+        </span>
       </div>
-      <div v-if="multiStats.cells > 0" class="prop-row compact">
-        <span class="prop-label">Cells</span>
-        <span class="prop-value">{{ multiStats.cells }}</span>
+      <div v-if="sel.layerName" class="prop-row">
+        <span class="prop-label">Layer</span>
+        <span class="prop-value">{{ sel.layerName }}</span>
       </div>
-      <div v-if="multiStats.powerNets > 0" class="prop-row compact">
-        <span class="prop-label">Power Nets</span>
-        <span class="prop-value">{{ multiStats.powerNets }}</span>
+      <div v-if="directionLabel" class="prop-row">
+        <span class="prop-label">Direction</span>
+        <span class="prop-value">{{ directionLabel }}</span>
       </div>
-      <div v-if="multiStats.signalNets > 0" class="prop-row compact">
-        <span class="prop-label">Signal Nets</span>
-        <span class="prop-value">{{ multiStats.signalNets }}</span>
+      <div v-if="sel.wireWidth" class="prop-row">
+        <span class="prop-label">Wire Width</span>
+        <span class="prop-value font-mono">{{ sel.wireWidth }} <span class="unit">({{ formatDbu(sel.wireWidth) }} μm)</span></span>
+      </div>
+
+      <div class="prop-section">
+        <div class="section-title">Position &amp; Size</div>
+        <div class="prop-row compact">
+          <span class="prop-label">X</span>
+          <span class="prop-value font-mono">{{ sel.bboxX }} <span class="unit">({{ formatDbu(sel.bboxX) }} μm)</span></span>
+        </div>
+        <div class="prop-row compact">
+          <span class="prop-label">Y</span>
+          <span class="prop-value font-mono">{{ sel.bboxY }} <span class="unit">({{ formatDbu(sel.bboxY) }} μm)</span></span>
+        </div>
+        <div class="prop-row compact">
+          <span class="prop-label">Width</span>
+          <span class="prop-value font-mono">{{ sel.bboxW }} <span class="unit">({{ formatDbu(sel.bboxW) }} μm)</span></span>
+        </div>
+        <div class="prop-row compact">
+          <span class="prop-label">Height</span>
+          <span class="prop-value font-mono">{{ sel.bboxH }} <span class="unit">({{ formatDbu(sel.bboxH) }} μm)</span></span>
+        </div>
+      </div>
+
+      <div class="prop-actions">
+        <button class="action-btn fit" @click="handleFitToView">Fit to View</button>
+        <button class="action-btn clear" @click="handleClear">Clear</button>
+      </div>
+    </div>
+
+    <!-- Global Shape -->
+    <div v-else-if="sel" class="properties-content">
+      <div class="prop-row">
+        <span class="prop-label">Type</span>
+        <span class="prop-value">
+          <span class="type-badge global">Global Shape</span>
+        </span>
+      </div>
+      <div v-if="sel.netName" class="prop-row">
+        <span class="prop-label">Net</span>
+        <span class="prop-value net-name">{{ sel.netName }}</span>
+      </div>
+      <div v-if="globalTypeLabel" class="prop-row">
+        <span class="prop-label">Shape Type</span>
+        <span class="prop-value">{{ globalTypeLabel }}</span>
+      </div>
+      <div v-if="sel.layerName" class="prop-row">
+        <span class="prop-label">Layer</span>
+        <span class="prop-value">{{ sel.layerName }}</span>
+      </div>
+
+      <div class="prop-section">
+        <div class="section-title">Position &amp; Size</div>
+        <div class="prop-row compact">
+          <span class="prop-label">X</span>
+          <span class="prop-value font-mono">{{ sel.bboxX }} <span class="unit">({{ formatDbu(sel.bboxX) }} μm)</span></span>
+        </div>
+        <div class="prop-row compact">
+          <span class="prop-label">Y</span>
+          <span class="prop-value font-mono">{{ sel.bboxY }} <span class="unit">({{ formatDbu(sel.bboxY) }} μm)</span></span>
+        </div>
+        <div class="prop-row compact">
+          <span class="prop-label">Width</span>
+          <span class="prop-value font-mono">{{ sel.bboxW }} <span class="unit">({{ formatDbu(sel.bboxW) }} μm)</span></span>
+        </div>
+        <div class="prop-row compact">
+          <span class="prop-label">Height</span>
+          <span class="prop-value font-mono">{{ sel.bboxH }} <span class="unit">({{ formatDbu(sel.bboxH) }} μm)</span></span>
+        </div>
+      </div>
+
+      <div class="prop-actions">
+        <button class="action-btn fit" @click="handleFitToView">Fit to View</button>
+        <button class="action-btn clear" @click="handleClear">Clear</button>
       </div>
     </div>
   </div>
@@ -232,11 +286,77 @@ const multiStats = computed(() => {
   font-weight: 500;
 }
 
-.type-badge.cell { background: rgba(68, 68, 255, 0.2); color: #6666ff; }
-.type-badge.powernet { background: rgba(255, 68, 68, 0.2); color: #ff6666; }
-.type-badge.signalnet { background: rgba(68, 255, 68, 0.2); color: #66ff66; }
+.type-badge.instance { background: rgba(68, 68, 255, 0.2); color: #6699ff; }
+.type-badge.segment  { background: rgba(255, 136, 0, 0.2); color: #ff9933; }
+.type-badge.global   { background: rgba(0, 191, 255, 0.2); color: #00bfff; }
+
+.net-name {
+  color: #67e8f9;
+  font-weight: 600;
+}
+
+.unit {
+  color: var(--text-tertiary, #888);
+  font-size: 10px;
+}
 
 .font-mono {
   font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.prop-actions {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  gap: 6px;
+}
+
+.action-btn {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+/* Light：深色字 + 可辨边框；Clear 勿用白半透明（在浅底上几乎看不见） */
+.action-btn.fit {
+  background: color-mix(in srgb, var(--accent-color) 16%, var(--bg-primary));
+  color: #0d9488;
+  border-color: color-mix(in srgb, var(--accent-color) 42%, var(--border-color));
+}
+.action-btn.fit:hover {
+  background: color-mix(in srgb, var(--accent-color) 28%, var(--bg-primary));
+}
+
+.action-btn.clear {
+  background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-secondary));
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.action-btn.clear:hover {
+  background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
+}
+
+:global(.dark) .action-btn.fit {
+  background: rgba(0, 150, 200, 0.3);
+  color: #7dd3fc;
+  border-color: transparent;
+}
+:global(.dark) .action-btn.fit:hover {
+  background: rgba(0, 150, 200, 0.5);
+}
+
+:global(.dark) .action-btn.clear {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+:global(.dark) .action-btn.clear:hover {
+  background: rgba(255, 255, 255, 0.15);
 }
 </style>

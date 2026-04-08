@@ -16,8 +16,8 @@ const DEFAULT_OPTIONS: Required<RulerOptions> = {
   fontSize: 9
 }
 
-/** 标尺刻度级别 */
-const TICK_INTERVALS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+/** 1-2-5 序列乘数，用于在任意数量级上选择合适的刻度间隔 */
+const NICE_MULTIPLIERS = [1, 2, 5]
 
 export class RulerPlugin implements IPlugin {
   readonly name = 'ruler'
@@ -155,19 +155,17 @@ export class RulerPlugin implements IPlugin {
     }
   }
 
-  /** 根据缩放计算合适的刻度间隔 */
+  /** 根据缩放计算合适的刻度间隔（支持任意数量级） */
   private calculateTickInterval(scale: number): number {
-    // 目标：每个刻度在屏幕上大约 50-100 像素
     const targetScreenInterval = 80
     const worldInterval = targetScreenInterval / scale
 
-    // 找到最接近的刻度级别
-    for (const interval of TICK_INTERVALS) {
-      if (interval >= worldInterval) {
-        return interval
-      }
+    // 通过 1-2-5 序列在任意数量级上找到 >= worldInterval 的最小 "nice" 值
+    const mag = Math.pow(10, Math.floor(Math.log10(worldInterval)))
+    for (const m of NICE_MULTIPLIERS) {
+      if (m * mag >= worldInterval) return m * mag
     }
-    return TICK_INTERVALS[TICK_INTERVALS.length - 1]
+    return 10 * mag
   }
 
   /** 绘制标尺 */
@@ -254,9 +252,9 @@ export class RulerPlugin implements IPlugin {
     // 绘制刻度
     this.hTicks.setStrokeStyle({ width: 1, color: tickColor })
 
-    // 为了避免文字重叠，保证相邻文字在屏幕上的间距至少 40 像素
-    const minLabelScreenInterval = 40
-    let lastLabelScreenX = -Infinity
+    const labelGap = 12
+    const charWidth = this.options.fontSize * 0.65
+    let lastLabelEndX = -Infinity
 
     for (let worldX = startTick; worldX <= worldEndX; worldX += subInterval) {
       const screenX = worldX * transform.scale + transform.x
@@ -270,16 +268,13 @@ export class RulerPlugin implements IPlugin {
       this.hTicks.lineTo(screenX, thickness)
       this.hTicks.stroke()
 
-      // 主刻度添加文字（根据屏幕间距筛选，避免重叠）
-      if (isMajor && screenX - lastLabelScreenX >= minLabelScreenInterval) {
-        const label = new Text({
-          text: this.formatNumber(worldX),
-          style: this.textStyle
-        })
+      if (isMajor && screenX >= lastLabelEndX + labelGap) {
+        const text = this.formatNumber(worldX)
+        const label = new Text({ text, style: this.textStyle })
         label.x = screenX + 2
         label.y = 2
         this.hLabels.addChild(label)
-        lastLabelScreenX = screenX
+        lastLabelEndX = screenX + 2 + text.length * charWidth
       }
     }
   }
@@ -353,9 +348,18 @@ export class RulerPlugin implements IPlugin {
     }
   }
 
-  /** 格式化数字显示 */
+  /** 格式化数字显示（大数字用 K/M 后缀缩短） */
   private formatNumber(value: number): string {
-    if (Math.abs(value) < 0.01) return '0'
+    const abs = Math.abs(value)
+    if (abs < 0.01) return '0'
+    if (abs >= 1_000_000) {
+      const v = value / 1_000_000
+      return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + 'M'
+    }
+    if (abs >= 10_000) {
+      const v = value / 1_000
+      return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + 'K'
+    }
     return value.toFixed(0)
   }
 }

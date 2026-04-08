@@ -1,22 +1,42 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import type { Editor } from '@/applications/editor'
-import { SelectPlugin, MeasurePlugin } from '@/applications/editor/plugins'
+import { SelectPlugin } from '@/applications/editor/plugins'
 
 interface Props {
   editor?: Editor | null
+  /** 是否显示「从布局 JSON 生成瓦片」工具（Tauri 开发模式等） */
+  showTileGenerate?: boolean
+  /** 正在生成瓦片时禁用按钮 */
+  tileGenBusy?: boolean
+  /** 矢量版图模式：在 Select 工具上附加与画布选中区一致的快捷键说明 */
+  layoutTileShortcutsHint?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  showTileGenerate: false,
+  tileGenBusy: false,
+  layoutTileShortcutsHint: false,
+})
 
 const emit = defineEmits<{
   toolChange: [toolId: string]
+  generateTiles: []
 }>()
 
 const activeTool = ref('hand')
 const isRulerEnabled = ref(true)
-const zoomLevel = ref(100)
+/** 与 Editor 缩放一致：100% = scale 1；极小 scale 避免 round 成 0 */
+const zoomPercentLabel = ref('100')
 let unlistenTransform: (() => void) | null = null
+
+function formatZoomPercentLabel(scale: number): string {
+  const pct = scale * 100
+  if (!Number.isFinite(pct) || pct <= 0) return '0'
+  if (pct < 0.01) return '<0.01'
+  if (pct < 1) return pct.toFixed(2).replace(/\.?0+$/, '')
+  return String(Math.round(pct))
+}
 
 const tools = [
   { id: 'hand', icon: 'ri-hand', tooltip: 'Pan (H)', shortcut: 'h' },
@@ -25,6 +45,13 @@ const tools = [
   { id: 'highlight', icon: 'ri-focus-3-line', tooltip: 'Highlight', shortcut: '' },
   { id: 'layers', icon: 'ri-stack-line', tooltip: 'Layers', shortcut: '' },
 ]
+
+function toolTitle(tool: (typeof tools)[number]): string {
+  if (tool.id === 'select' && props.layoutTileShortcutsHint) {
+    return `${tool.tooltip} · 版图 Esc / R / C / Del / Ctrl+Z / F`
+  }
+  return tool.tooltip
+}
 
 const setActiveTool = (toolId: string) => {
   const prev = activeTool.value
@@ -38,22 +65,24 @@ const setActiveTool = (toolId: string) => {
     const selectPlugin = editor.getPlugin<SelectPlugin>('select')
     selectPlugin?.deactivate()
   }
-  if (prev === 'measure') {
-    const measurePlugin = editor.getPlugin<MeasurePlugin>('measure')
-    measurePlugin?.deactivate()
-  }
+  // if (prev === 'measure') {
+  //   const measurePlugin = editor.getPlugin<MeasurePlugin>('measure')
+  //   measurePlugin?.deactivate()
+  // }
 
   // Activate new tool
   if (toolId === 'select') {
     const selectPlugin = editor.getPlugin<SelectPlugin>('select')
     selectPlugin?.activate()
-  } else if (toolId === 'measure') {
-    const measurePlugin = editor.getPlugin<MeasurePlugin>('measure')
-    measurePlugin?.activate()
-  } else if (toolId === 'hand') {
+  }
+  else if (toolId === 'hand') {
     const viewport = editor.view
     if (viewport) viewport.plugins.resume('drag')
   }
+  // else if (toolId === 'measure') {
+  //   const measurePlugin = editor.getPlugin<MeasurePlugin>('measure')
+  //   measurePlugin?.activate()
+  // } 
 
   emit('toolChange', toolId)
 }
@@ -101,14 +130,14 @@ onUnmounted(() => {
 watch(() => props.editor, (editor) => {
   if (editor) {
     editor.setPluginEnabled('ruler', isRulerEnabled.value)
-    zoomLevel.value = Math.round(editor.getScale() * 100)
+    zoomPercentLabel.value = formatZoomPercentLabel(editor.getScale())
 
     if (unlistenTransform) {
       unlistenTransform()
     }
 
     unlistenTransform = editor.onTransformChange((t) => {
-      zoomLevel.value = Math.round(t.scale * 100)
+      zoomPercentLabel.value = formatZoomPercentLabel(t.scale)
     })
   }
 }, { immediate: true })
@@ -121,8 +150,26 @@ watch(() => props.editor, (editor) => {
       <button v-for="tool in tools" :key="tool.id" @click="setActiveTool(tool.id)" :class="{
         'bg-(--accent-color) text-white': activeTool === tool.id,
         'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)': activeTool !== tool.id
-      }" class="w-9 h-9 flex items-center justify-center rounded transition-all" :title="tool.tooltip">
+      }" class="w-9 h-9 flex items-center justify-center rounded transition-all" :title="toolTitle(tool)">
         <i :class="tool.icon" class="text-base"></i>
+      </button>
+
+      <div v-if="showTileGenerate" class="w-px h-6 bg-(--border-color) mx-0.5" />
+
+      <button
+        v-if="showTileGenerate"
+        type="button"
+        :disabled="tileGenBusy"
+        @click="emit('generateTiles')"
+        :class="[
+          tileGenBusy
+            ? 'opacity-50 cursor-wait text-(--text-secondary)'
+            : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)',
+          'w-9 h-9 flex items-center justify-center rounded transition-all shrink-0',
+        ]"
+        title="Rendering layout"
+      >
+        <i class="ri-grid-fill text-base" :class="{ 'animate-pulse': tileGenBusy }"></i>
       </button>
     </div>
 
@@ -145,7 +192,7 @@ watch(() => props.editor, (editor) => {
           title="Zoom Out">
           <i class="ri-subtract-line text-sm"></i>
         </button>
-        <span class="text-[13px] text-(--text-primary) font-medium min-w-[50px] text-center">{{ zoomLevel }}%</span>
+        <span class="text-[13px] text-(--text-primary) font-medium min-w-[52px] text-center tabular-nums">{{ zoomPercentLabel }}%</span>
         <button @click="handleZoomIn" class="text-(--text-secondary) hover:text-(--text-primary) transition-colors"
           title="Zoom In">
           <i class="ri-add-line text-sm"></i>

@@ -2,7 +2,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
 import { useWorkspace } from './useWorkspace'
-import { useTauri } from './useTauri'
+import { useTauri, isTauri } from './useTauri'
 import { fetchSharedHomeData, convertRemoteToLocalPath } from './useHomeData'
 import { STEP_METADATA, getStepMetadata } from '@/api/type'
 import type { ECCResponse } from '@/api/sse'
@@ -50,6 +50,58 @@ const FIXED_SETUP_STAGES: FlowStage[] = Object.entries(STEP_METADATA)
     'peak memory (mb)': 0,
   }))
 
+/**
+ * 将 flow.json 数据转换为 FlowStage 格式（与侧边栏加载逻辑一致）
+ */
+function transformFlowData(flowData: FlowData): FlowStage[] {
+  const stages: FlowStage[] = []
+  console.log('flowData.steps:', flowData.steps)
+  for (const step of flowData.steps) {
+    const metadata = getStepMetadata(step.name)
+    stages.push({
+      label: metadata?.label ?? step.name,
+      path: metadata?.path ?? step.name,
+      icon: metadata?.icon ?? 'ri-checkbox-blank-circle-line',
+      group: 'run',
+      state: step.state,
+      runtime: step.runtime || '',
+      'peak memory (mb)': step['peak memory (mb)'] || 0,
+    })
+  }
+  return stages
+}
+
+/**
+ * 从工程读取 flow.json，返回全部 run 步骤的 path（用作路由 stepKey）。
+ * 读取失败时回退为 STEP_METADATA 中 `group === 'run'` 的全集。
+ */
+export async function loadFlowRunStepKeysFromProject(projectPath: string): Promise<string[]> {
+  if (!isTauri() || !projectPath) {
+    return fallbackRunStepKeys()
+  }
+  try {
+    await invoke('request_project_permission', { path: projectPath })
+    const homeData = await fetchSharedHomeData(projectPath, true)
+    if (!homeData?.flow) {
+      return fallbackRunStepKeys()
+    }
+    const localFlowPath = convertRemoteToLocalPath(homeData.flow, projectPath)
+    const fileContent = await readTextFile(localFlowPath)
+    const flowData: FlowData = JSON.parse(fileContent)
+    const stages = transformFlowData(flowData)
+    return stages.map((s) => s.path)
+  } catch (e) {
+    console.warn('[loadFlowRunStepKeysFromProject]', e)
+    return fallbackRunStepKeys()
+  }
+}
+
+function fallbackRunStepKeys(): string[] {
+  return Object.values(STEP_METADATA)
+    .filter((m) => m.group === 'run')
+    .map((m) => m.path)
+}
+
 // ============ Composable ============
 
 /**
@@ -81,33 +133,6 @@ export function useFlowStages() {
       console.warn('Failed to request file access permission:', permError)
       return false
     }
-  }
-
-  /**
-   * 将 flow.json 数据转换为 FlowStage 格式
-   * 完全基于 flow.json 中的步骤动态生成，使用 STEP_METADATA 获取显示配置
-   */
-  function transformFlowData(flowData: FlowData): FlowStage[] {
-    const stages: FlowStage[] = []
-    console.log('flowData.steps:', flowData.steps)
-    for (const step of flowData.steps) {
-      const metadata = getStepMetadata(step.name)
-
-      // 如果有元数据配置则使用，否则使用默认配置
-      // 所有 flow.json 中的步骤都会显示
-      stages.push({
-        label: metadata?.label ?? step.name,
-        path: metadata?.path ?? step.name,
-        icon: metadata?.icon ?? 'ri-checkbox-blank-circle-line',
-        group: 'run',
-        state: step.state,
-        runtime: step.runtime || '',
-        'peak memory (mb)': step['peak memory (mb)'] || 0,
-      })
-
-    }
-
-    return stages
   }
 
   /**

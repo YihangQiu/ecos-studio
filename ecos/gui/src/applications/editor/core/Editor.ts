@@ -151,7 +151,7 @@ export class Editor {
       .pinch()
       .wheel()
       .decelerate()
-      .clampZoom({ minScale: 0.1, maxScale: 10 })
+      .clampZoom({ minScale: 0.0001, maxScale: 30 })
 
     this.app.stage.addChild(this.viewport)
 

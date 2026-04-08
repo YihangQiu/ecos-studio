@@ -1226,115 +1226,6 @@ function stateClass(state: string): string {
   flex-shrink: 0;
 }
 
-/* ===== 图表预览 Lightbox ===== */
-.chart-lightbox-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(6px);
-}
-
-.chart-lightbox-content {
-  display: flex;
-  flex-direction: column;
-  max-width: 90vw;
-  max-height: 90vh;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-}
-
-.chart-lightbox-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-}
-
-.chart-lightbox-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.chart-lightbox-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 18px;
-  transition: background 0.15s, color 0.15s;
-}
-
-.chart-lightbox-close:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-
-.chart-lightbox-body {
-  padding: 16px;
-  overflow: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.chart-lightbox-body img {
-  max-width: 85vw;
-  max-height: 80vh;
-  object-fit: contain;
-  border-radius: 4px;
-}
-
-/* Lightbox 过渡动画 */
-.lightbox-enter-active {
-  transition: opacity 0.2s ease;
-}
-
-.lightbox-enter-active .chart-lightbox-content {
-  transition: transform 0.2s ease, opacity 0.2s ease;
-}
-
-.lightbox-leave-active {
-  transition: opacity 0.15s ease;
-}
-
-.lightbox-leave-active .chart-lightbox-content {
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-
-.lightbox-enter-from {
-  opacity: 0;
-}
-
-.lightbox-enter-from .chart-lightbox-content {
-  opacity: 0;
-  transform: scale(0.92);
-}
-
-.lightbox-leave-to {
-  opacity: 0;
-}
-
-.lightbox-leave-to .chart-lightbox-content {
-  opacity: 0;
-  transform: scale(0.95);
-}
-
 .analysis-placeholder {
   height: 100%;
   display: flex;
@@ -1366,6 +1257,7 @@ function stateClass(state: string): string {
   color: var(--text-secondary);
   opacity: 0.6;
 }
+
 /* ==================== Flow step log ==================== */
 .flow-log-content {
   flex: 1;

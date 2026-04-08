@@ -1,57 +1,64 @@
 # ECOS Studio (GUI)
 
-基于 **Tauri + Vue 3 + TypeScript** 构建的高性能桌面端芯片设计应用程序。
+Desktop chip-design frontend built with **Tauri + Vue 3 + TypeScript**, working with backends such as `ecos/server` as part of ECOS Studio.
 
-## 快速开始
+## Prerequisites
 
-### 安装依赖
+- **Node.js** (LTS recommended)
+- **pnpm** (this repo uses pnpm for dependencies)
+- **Rust toolchain** (only needed for local Tauri dev and packaging)
+
+For a fuller end-to-end setup (Python, `uv`, Bazel, etc.), see the [ECOS package README](../README.md) and the [repository root README](../../README.md).
+
+## Quick start
+
+### Install dependencies
+
 ```bash
 pnpm install
 ```
 
-### 开发调试
+### Development
+
 ```bash
-# 运行前端和 Tauri 后端 (推荐)
+# Tauri shell + frontend
 pnpm run tauri:dev
-
-# 仅在浏览器中预览前端
-pnpm run dev
 ```
 
-### 项目构建
+### Build and preview
+
 ```bash
-# 生成对应平台的安装包 (dmg, exe, deb, AppImage 等)
-pnpm run tauri:build
+# Typecheck + production build (output to dist/, used by Tauri beforeBuildCommand)
+pnpm run build
 ```
 
-## 技术栈
+## Stack
 
-- **Tauri 1.5** - Rust 后端
-- **Vue 3** - 前端框架 (Composition API)
-- **PixiJS 8** - 高性能 WebGL/WebGPU 渲染
-- **PrimeVue 4** - UI 组件 (Aura 主题)
-- **Tailwind CSS v4** - 样式方案
-- **Vite 7** - 构建工具
+- **Tauri 2** — Rust desktop shell and system APIs
+- **Vue 3** — Composition API
+- **PixiJS 8** — WebGL/WebGPU canvas and editor rendering
+- **PrimeVue 4** — UI components (Aura theme)
+- **Tailwind CSS v4** — styling
+- **Vite 7** — dev and build
 
-## 环境准备
+## Source layout (overview)
 
-详细的环境配置和开发指南，请参阅：
+| Path | Description |
+|------|-------------|
+| `src/applications/editor/` | Canvas editor core, layout rendering, plugins, tile logic |
+| `src/components/` | Reusable UI (toolbar, sidebars, panels, etc.) |
+| `src/views/` | Routed pages |
+| `src/composables/` | Composables (workspace, menus, Tauri wrappers, etc.) |
+| `src/stores/` | Pinia state |
+| `src/api/` | HTTP / SSE client wrappers |
+| `src-tauri/` | Tauri backend (Rust), packaging and window config |
 
-**[GUI Development Guide](../docs/gui-develop-guide.md)**
+## Related docs
 
-包含：
-- Node.js、pnpm、Rust 安装
-- 系统依赖配置 (macOS/Windows/Linux)
-- 项目结构说明
-- 开发指南和最佳实践
-- 构建和分发说明
-
-## 相关文档
-
-- [GUI Development Guide](../docs/gui-develop-guide.md) - 完整 GUI 开发指南
-- [项目主 README](../README.md) - 项目概览和快速开始
-- [开发指南](../docs/development.md) - 完整开发环境配置
-- [架构文档](../docs/architecture.md) - 系统架构设计
+- [ECOS package README](../README.md) — overall quick start and release notes for `ecos/server` + GUI  
+- [ECOS Studio user guide](../docs/user-guide.md) — product usage  
+- [Repository root README](../../README.md) — monorepo overview  
+- [ECC development](../../ecc/docs/development.md), [ECC architecture](../../ecc/docs/architecture.md) — ECC toolchain docs  
 
 ---
 

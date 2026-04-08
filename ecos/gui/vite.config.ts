@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
@@ -5,6 +6,10 @@ import { fileURLToPath, URL } from 'node:url'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  define: {
+    // ecos/gui 根目录（供 Tauri 内调用 gen-mock-tiles.ts）
+    __ECOS_GUI_ROOT__: JSON.stringify(fileURLToPath(new URL('.', import.meta.url))),
+  },
   base: './',
   resolve: {
     alias: {
@@ -28,7 +33,7 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ['**/src-tauri/**']
+      ignored: ['**/src-tauri/**', '**/public/mock-design/**']
     },
     // 配置 /data 路径服务 feature 图片等静态资源
     fs: {
@@ -58,6 +63,10 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['vue', 'vue-router', 'primevue']
-  }
+  },
+  test: {
+    environment: 'node',
+    globals: true,
+  },
 })
 

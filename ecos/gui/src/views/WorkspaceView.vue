@@ -1,16 +1,40 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import Splitter from 'primevue/splitter'
 import SplitterPanel from 'primevue/splitterpanel'
+import { StepEnum } from '@/api/type'
+import { useLayoutState } from '@/composables/useLayoutState'
 import DrawingArea from '../components/DrawingArea.vue'
 import ChatInspectorPanel from '../components/ChatInspectorPanel.vue'
 import ThumbnailGallery from '../components/ThumbnailGallery.vue'
 import PropertiesPanel from '../components/PropertiesPanel.vue'
 import LayerPanel from '../components/LayerPanel.vue'
-import { useLayoutState } from '@/composables/useLayoutState'
+import DrcViolationPanel from '../components/DrcViolationPanel.vue'
 
 const layoutState = useLayoutState()
-const isLayoutMode = computed(() => layoutState.renderMode.value === 'layout')
+const route = useRoute()
+
+/** 图片预览模式不显示图层/属性栏；勿用整树 :key 切换，否则 DrawingArea 会重挂载并再次跑 handleStageChange，把矢量版图打回图片预览 */
+const showLayoutSidePanels = computed(() => layoutState.renderMode.value === 'layout')
+
+/** 仅 DRC 路由显示违例面板（与 DrawingArea 当前步骤段一致） */
+const isDrcStep = computed(() => {
+  const pathParts = route.path.split('/')
+  const stage = pathParts[pathParts.length - 1] || ''
+  return stage.toLowerCase() === StepEnum.DRC.toLowerCase()
+})
+
+const mainSplitter = ref<InstanceType<typeof Splitter> | null>(null)
+
+watch(
+  [showLayoutSidePanels, isDrcStep],
+  async () => {
+    await nextTick()
+    mainSplitter.value?.resetState?.()
+  },
+  { flush: 'post' },
+)
 
 let isResizing = false
 
@@ -53,9 +77,9 @@ onUnmounted(() => {
 </script>
 <template>
   <div class="editor-view">
-    <Splitter class="flex-1 h-full border-none min-w-0">
-      <!-- Left: Drawing + Thumbnails -->
-      <SplitterPanel :size="isLayoutMode ? 50 : 65" :minSize="35" class="flex flex-col min-w-0">
+    <Splitter ref="mainSplitter" class="flex-1 h-full border-none min-w-0">
+      <!-- Left: Drawing + Thumbnails（无中间栏时 60+15 合并为 75） -->
+      <SplitterPanel :size="showLayoutSidePanels ? 60 : 75" :minSize="35" class="flex flex-col min-w-0">
         <Splitter layout="vertical" class="h-full border-none">
           <SplitterPanel :size="70" :minSize="30" class="flex flex-col">
             <DrawingArea />
@@ -66,23 +90,41 @@ onUnmounted(() => {
         </Splitter>
       </SplitterPanel>
 
-      <!-- Middle: Layout panels (only in layout mode) -->
-      <SplitterPanel v-if="isLayoutMode" :size="15" :minSize="10" class="flex flex-col min-w-0 overflow-hidden">
+      <!-- Middle: Layout panels（仅矢量/Tile 版图模式） -->
+      <SplitterPanel
+        v-if="showLayoutSidePanels"
+        :size="15"
+        :minSize="10"
+        class="flex flex-col min-w-0 overflow-hidden"
+      >
         <Splitter layout="vertical" class="h-full border-none">
-          <SplitterPanel :size="45" :minSize="20" class="flex flex-col overflow-hidden">
-            <LayerPanel :layer-manager="layoutState.layerManager.value" />
+          <SplitterPanel
+            v-if="isDrcStep"
+            :size="32"
+            :minSize="16"
+            class="flex flex-col overflow-hidden min-h-0"
+          >
+            <DrcViolationPanel />
           </SplitterPanel>
-          <SplitterPanel :size="55" :minSize="20" class="flex flex-col overflow-hidden">
-            <PropertiesPanel
-              :selected-groups="layoutState.selectedGroups.value"
-              :data-store="layoutState.dataStore.value"
-            />
+          <SplitterPanel
+            :size="isDrcStep ? 34 : 45"
+            :minSize="14"
+            class="flex flex-col overflow-hidden min-h-0"
+          >
+            <LayerPanel />
+          </SplitterPanel>
+          <SplitterPanel
+            :size="isDrcStep ? 34 : 55"
+            :minSize="18"
+            class="flex flex-col overflow-hidden min-h-0"
+          >
+            <PropertiesPanel />
           </SplitterPanel>
         </Splitter>
       </SplitterPanel>
 
       <!-- Right: Chat -->
-      <SplitterPanel :size="isLayoutMode ? 35 : 35" :minSize="25" class="chat-panel overflow-hidden min-w-0 max-w-full">
+      <SplitterPanel :size="25" :minSize="25" class="chat-panel overflow-hidden min-w-0 max-w-full">
         <ChatInspectorPanel />
       </SplitterPanel>
     </Splitter>

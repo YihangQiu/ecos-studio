@@ -93,3 +93,10 @@
 
 **结论**：以 **EDA 数学坐标系**为准作为**数据源**没问题；**世界**是引擎内部为了和 Pixi 一致而选的**一套数**，用 `editorCoordinates` 在边界换算即可。方案切换时，改**数据进入渲染与索引的那条链路**，保证「画的、点的、存的」三处自洽。
 
+---
+
+## 9. 瓦片模式（`TileManager` / `gen-mock-tiles`）
+
+- 生成脚本把布局 JSON 里的几何**先**按与 `LayoutRenderer` 一致的约定放进 **Pixi 世界**：在 die 局部范围内 Y 轴向下（`parseSourceData` 里用 `dieH - y` 翻转），`manifest.dieArea` 一般为 `{ x:0, y:0, w, h }`，瓦片与实例坐标都在 **`[0, w) × [0, h)`** 世界坐标里。
+- `TileManager.init()` 会把 **Viewport** 的 `worldWidth` / `worldHeight` 设为 `dieArea.w` / `dieArea.h`，但 **`Editor` 内部的 `worldWidth` / `worldHeight`（`setWorldBounds`）不会自动跟着变**。
+- 因此进入瓦片视图时（例如 `DrawingArea` 里 `loadTileLayout` 在 `tileManager.init()` 之后）必须再调用 **`editor.setWorldBounds(dieArea.w, dieArea.h)`**，这样 `worldToDisplay`、状态栏/鼠标 EDA 坐标与 `worldHeight` 才与瓦片几何、标尺一致。

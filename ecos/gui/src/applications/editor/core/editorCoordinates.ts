@@ -54,3 +54,26 @@ export function worldTopLeftFromDisplayBottomLeft(
     y: bottomWorldY - contentHeight
   }
 }
+
+/**
+ * DRC/EDA 轴对齐框（llx,lly,urx,ury 为显示坐标：左下原点、Y 向上）→ Pixi 世界 rect（左上 + 宽高，Y 向下）。
+ * 与 `COORDINATES.md`、`gen-mock-tiles` 中 `dieH - y` 翻转一致；`worldHeight` 为 die 高度（与 `Editor.worldHeight` / `dieArea.h` 一致）。
+ */
+export function edaBBoxToWorldRect(
+  llx: number,
+  lly: number,
+  urx: number,
+  ury: number,
+  worldHeight: number,
+): { x: number; y: number; w: number; h: number } {
+  const minX = Math.min(llx, urx)
+  const maxX = Math.max(llx, urx)
+  const minY = Math.min(lly, ury)
+  const maxY = Math.max(lly, ury)
+  return {
+    x: minX,
+    y: worldHeight - maxY,
+    w: maxX - minX,
+    h: maxY - minY,
+  }
+}

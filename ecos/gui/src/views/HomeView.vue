@@ -113,9 +113,14 @@
           <div class="charts-grid" v-if="analysisCharts.length > 0">
             <div class="chart-card" v-for="chart in analysisCharts" :key="chart.label"
               :title="chart.label"
-              @click="chart.imageBlobUrl && openChartPreview(chart.imageBlobUrl, chart.label)">
+              role="button"
+              tabindex="0"
+              @click="onAnalysisChartClick(chart)"
+              @keydown.enter.prevent="onAnalysisChartClick(chart)"
+              @keydown.space.prevent="onAnalysisChartClick(chart)">
               <div class="chart-visual">
-                <img v-if="chart.imageBlobUrl" :src="chart.imageBlobUrl" :alt="chart.label" class="chart-image" />
+                <img v-if="chart.imageBlobUrl" :src="chart.imageBlobUrl" :alt="chart.label" class="chart-image"
+                  draggable="false" />
                 <i v-else class="ri-image-2-line"></i>
               </div>
               <span class="chart-label">{{ chart.label }}</span>
@@ -248,7 +253,7 @@ import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useParameters } from '@/composables/useParameters'
-import { useHomeData } from '@/composables/useHomeData'
+import { useHomeData, type AnalysisChartItem } from '@/composables/useHomeData'
 
 // 注册 ECharts 组件（按需引入）
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
@@ -323,7 +328,13 @@ function toggleLayoutFullscreen() {
 }
 
 function onFullscreenKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && isLayoutFullscreen.value) {
+  if (e.key !== 'Escape') return
+  if (chartPreview.value.visible) {
+    closeChartPreview()
+    e.preventDefault()
+    return
+  }
+  if (isLayoutFullscreen.value) {
     isLayoutFullscreen.value = false
     resetLayoutTransform()
   }
@@ -713,6 +724,11 @@ function openChartPreview(url: string, label: string) {
   chartPreview.value = { visible: true, url, label }
 }
 
+function onAnalysisChartClick(chart: AnalysisChartItem) {
+  if (!chart.imageBlobUrl) return
+  openChartPreview(chart.imageBlobUrl, chart.label)
+}
+
 function closeChartPreview() {
   chartPreview.value.visible = false
 }
@@ -845,6 +861,8 @@ function stateClass(state: string): string {
 
 .analysis-area {
   grid-area: analysis;
+  position: relative;
+  z-index: 2;
 }
 
 .gds-area {
@@ -1266,6 +1284,110 @@ function stateClass(state: string): string {
   font-size: 10px;
   color: var(--text-secondary);
   opacity: 0.6;
+}
+
+/* 指标图表预览 Lightbox（Teleport 到 body，样式仍属本组件 scoped） */
+.chart-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+  box-sizing: border-box;
+}
+
+.chart-lightbox-content {
+  max-width: min(96vw, 1200px);
+  max-height: min(90vh, 900px);
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+}
+
+.chart-lightbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.chart-lightbox-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-lightbox-close {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chart-lightbox-close:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.chart-lightbox-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: var(--bg-primary);
+}
+
+.chart-lightbox-body img {
+  max-width: 100%;
+  max-height: min(80vh, 820px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.lightbox-enter-active,
+.lightbox-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.lightbox-enter-from,
+.lightbox-leave-to {
+  opacity: 0;
+}
+
+.lightbox-enter-active .chart-lightbox-content,
+.lightbox-leave-active .chart-lightbox-content {
+  transition: transform 0.2s ease;
+}
+
+.lightbox-enter-from .chart-lightbox-content,
+.lightbox-leave-to .chart-lightbox-content {
+  transform: scale(0.96);
 }
 
 /* ==================== Flow step log ==================== */

@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod gen_layout_tiles;
+
 use std::io::IsTerminal;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
@@ -956,7 +958,7 @@ struct FinalizeLayoutTileCacheMetaPayload {
     content_sha256: String,
 }
 
-/// 在 `gen-mock-tiles` 成功写入输出目录后调用，持久化缓存指纹。
+/// 在瓦片生成成功写入输出目录后调用，持久化缓存指纹。
 #[tauri::command]
 async fn finalize_layout_tile_cache_meta(
     payload: FinalizeLayoutTileCacheMetaPayload,
@@ -975,6 +977,25 @@ async fn finalize_layout_tile_cache_meta(
         .map_err(|e| format!("write {}: {}", meta_path.display(), e))?;
     info!("cmd=finalize_layout_tile_cache_meta path={}", meta_path.display());
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerateLayoutTilesPayload {
+    layout_json_path: String,
+    out_dir: String,
+}
+
+/// 从布局 JSON 生成瓦片目录。
+#[tauri::command]
+async fn generate_layout_tiles(payload: GenerateLayoutTilesPayload) -> Result<(), String> {
+    use std::path::PathBuf;
+
+    let layout = PathBuf::from(payload.layout_json_path);
+    let out = PathBuf::from(payload.out_dir);
+    tauri::async_runtime::spawn_blocking(move || gen_layout_tiles::generate(&layout, &out))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn main() {
@@ -1092,6 +1113,7 @@ fn main() {
             request_project_permission,
             prepare_layout_tile_cache,
             finalize_layout_tile_cache_meta,
+            generate_layout_tiles,
             window_minimize,
             window_maximize,
             window_close,

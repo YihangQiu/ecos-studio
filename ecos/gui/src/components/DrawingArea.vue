@@ -2,20 +2,7 @@
 import { shallowRef, markRaw, watch, ref, onUnmounted, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { EditorContainer, type Editor } from '@/applications/editor'
-import {
-  LayoutDataStore,
-  LayoutRenderer,
-  LayerStyleManager,
-  SpatialIndex,
-  InteractionManager,
-} from '@/applications/editor/layout'
-import {
-  SelectPlugin,
-  MeasurePlugin,
-  LayerManagerPlugin,
-  HighlightPlugin,
-} from '@/applications/editor/plugins'
-import type { RawHeaderJSON, RawDataJSON } from '@/applications/editor/layout'
+import { LayerManagerPlugin } from '@/applications/editor/plugins'
 import {
   TileManager,
   TileInteraction,
@@ -58,7 +45,7 @@ const layoutJsonRelativePath = ref<string | null>(null)
 /** DRC 结果 JSON 相对路径：get_info 显式字段，或与布局同目录的 `drc.step.json` */
 const drcJsonRelativePath = ref<string | null>(null)
 const tileGenBusy = ref(false)
-const showTileGenerate = computed(() => isTauri() && import.meta.env.DEV)
+const showTileGenerate = computed(() => isTauri())
 
 /** 当前路由阶段名，用作瓦片缓存子目录 stepKey（与 handleStageChange 一致） */
 const currentStepKey = computed(() => {
@@ -102,9 +89,15 @@ function attachCanvasPointerTracking(ed: Editor): void {
 }
 
 watch(
-  () => currentProject.value?.path,
-  (p) => {
-    tilePrefetchStore.setProject(p ?? null)
+  () => [currentProject.value?.path ?? null, currentStepKey.value] as const,
+  ([projectPath, stepKey], prev) => {
+    const prevPath = prev?.[0] ?? null
+    if (projectPath !== prevPath) {
+      tilePrefetchStore.setProject(projectPath)
+    }
+    if (projectPath) {
+      tilePrefetchStore.notifyNavigatedStep(stepKey)
+    }
   },
   { immediate: true },
 )
@@ -203,13 +196,6 @@ function dispatchRedoChord(): void {
   }
 }
 
-// Layout modules (not reactive — managed imperatively)
-let dataStore: LayoutDataStore | null = null
-let renderer: LayoutRenderer | null = null
-let styleManager: LayerStyleManager | null = null
-let spatialIndex: SpatialIndex | null = null
-let interactionManager: InteractionManager | null = null
-let styleStateUnlisten: (() => void) | null = null
 // Tile rendering module
 let tileManager: TileManager | null = null
 let tileInteraction: TileInteraction | null = null
@@ -242,27 +228,12 @@ const onEditorReady = (editorInstance: Editor) => {
 }
 
 function cleanupLayout(): void {
-  if (styleStateUnlisten) {
-    styleStateUnlisten()
-    styleStateUnlisten = null
-  }
-
-  interactionManager?.destroy()
-  renderer?.destroy()
-  spatialIndex?.clear()
-  dataStore?.clear()
-  styleManager?.clear()
   placementTool?.destroy()
   editManager?.destroy()
   tileInteraction?.destroy()
   viewportAnimator?.destroy()
   tileManager?.destroy()
 
-  interactionManager = null
-  renderer = null
-  spatialIndex = null
-  dataStore = null
-  styleManager = null
   placementTool = null
   editManager = null
   tileInteraction = null
@@ -287,102 +258,6 @@ function cleanupLayout(): void {
   layoutState.hasUnsavedEdits.value = false
   layoutState.isPlacementMode.value = false
   layoutState.renderMode.value = 'image'
-}
-
-async function loadLayoutData(headerJson: RawHeaderJSON, dataJson: RawDataJSON): Promise<void> {
-  const ed = editor.value
-  if (!ed?.view) return
-
-  cleanupLayout()
-
-  layoutState.loadingState.value = 'loading'
-  layoutState.loadingMessage.value = 'Parsing header...'
-
-  try {
-    const t0 = performance.now()
-
-    // 1. Parse data
-    dataStore = markRaw(new LayoutDataStore())
-    dataStore.loadHeader(headerJson)
-    layoutState.dataStore.value = dataStore
-
-    layoutState.loadingMessage.value = 'Parsing layout data...'
-    dataStore.loadData(dataJson)
-
-    // 2. Build style manager
-    styleManager = markRaw(new LayerStyleManager())
-    styleManager.buildFromLayerDefs(dataStore.header!.layerList)
-    styleManager.applySnapshot(layoutState.layerStyleSnapshot.value)
-    styleStateUnlisten = styleManager.onChange(() => {
-      if (styleManager) {
-        layoutState.layerStyleSnapshot.value = styleManager.serialize()
-      }
-    })
-
-    // 3. Build spatial index
-    layoutState.loadingMessage.value = 'Building spatial index...'
-    spatialIndex = markRaw(new SpatialIndex())
-    const allBoxes = Array.from({ length: dataStore.totalGroups }, (_, i) => dataStore!.groups[i].children).flat()
-    spatialIndex.buildFromBoxes(allBoxes)
-
-    // 4. Render
-    layoutState.loadingMessage.value = 'Rendering layout...'
-    renderer = markRaw(new LayoutRenderer())
-    renderer.init(ed.view, dataStore, styleManager)
-
-    // 5. Interaction manager
-    interactionManager = markRaw(new InteractionManager())
-    interactionManager.init(ed.view, dataStore, renderer, spatialIndex)
-
-    interactionManager.onSelectionChange((e) => {
-      layoutState.selectedGroups.value = e.selectedGroups
-    })
-
-    // 6. Configure plugins
-    const selectPlugin = ed.getPlugin<SelectPlugin>('select')
-    if (selectPlugin) {
-      selectPlugin.configure(interactionManager, renderer)
-    }
-    const highlightPlugin = ed.getPlugin<HighlightPlugin>('highlight')
-    if (highlightPlugin) {
-      highlightPlugin.configure(dataStore, renderer)
-    }
-    const measurePlugin = ed.getPlugin<MeasurePlugin>('measure')
-    if (measurePlugin) {
-      measurePlugin.setDbuPerMicron(dataStore.dbuPerMicron)
-    }
-    const layerMgrPlugin = ed.getPlugin<LayerManagerPlugin>('layerManager')
-    if (layerMgrPlugin) {
-      layerMgrPlugin.configure(dataStore, renderer, styleManager)
-      layoutState.layerManager.value = markRaw(layerMgrPlugin)
-    }
-
-    // 7. 世界范围 + 缩放适配 die，左下角对齐标尺原点 (X=0、Y 显示 0)，不要用 moveCenter 居中（会抵消 align）
-    const dieArea = dataStore.dieArea
-    if (dieArea && dieArea.width > 0) {
-      ed.setWorldBounds(dieArea.width, dieArea.height)
-
-      const vp = ed.view!
-      const padding = 40
-      const sw = ed.size.width - padding * 2
-      const sh = ed.size.height - padding * 2
-      const scale = Math.min(sw / dieArea.width, sh / dieArea.height)
-      vp.scale.set(scale)
-      ed.alignViewportToRulerOrigin()
-    }
-
-    const elapsed = performance.now() - t0
-    console.log(`Layout loaded in ${elapsed.toFixed(0)}ms: ${dataStore.totalGroups} groups, ${dataStore.totalBoxes} boxes`)
-
-    layoutState.renderMode.value = 'layout'
-    layoutState.loadingState.value = 'ready'
-    layoutState.loadingMessage.value = ''
-  } catch (err) {
-    console.error('Failed to load layout data:', err)
-    layoutState.loadingState.value = 'error'
-    layoutState.loadingMessage.value = String(err)
-    cleanupLayout()
-  }
 }
 
 /** manifest.layer id（= layerIdx）在 cells.bin / global.bin 中是否出现几何 */
@@ -773,9 +648,6 @@ onUnmounted(() => {
   detachCanvasPointerListeners?.()
   window.removeEventListener('keydown', onWindowKeyDownForLayoutFit)
 })
-
-// 保留 loadLayoutData 供未来切换回 JSON 模式使用
-void loadLayoutData
 </script>
 
 <template>

@@ -1,4 +1,3 @@
-import { Command } from '@tauri-apps/plugin-shell'
 import { isAbsolute, join, normalize } from '@tauri-apps/api/path'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { isTauri } from '@/composables/useTauri'
@@ -77,9 +76,8 @@ export function deriveDrcStepPathFromLayoutJsonRelative(layoutJsonRelative: stri
 }
 
 /**
- * 从布局 JSON 生成瓦片包（gen-mock-tiles.ts），并返回可供 TileManager 使用的 baseUrl。
+ * 从布局 JSON 生成瓦片包（Rust `generate_layout_tiles`），并返回可供 TileManager 使用的 baseUrl。
  * 缓存目录按 `stepKey` 分文件夹；若源 JSON 内容 SHA-256 未变则跳过生成（由 Rust `prepare_layout_tile_cache` 判定）。
- * 依赖 Tauri shell 执行 npx tsx；当前仅在开发构建下启用（脚本路径相对 ecos/gui 根目录）。
  */
 export async function runLayoutTileGeneration(params: {
   projectPath: string
@@ -89,9 +87,6 @@ export async function runLayoutTileGeneration(params: {
 }): Promise<{ baseUrl: string; outDir: string; fromCache: boolean }> {
   if (!isTauri()) {
     throw new Error('瓦片生成仅可在 ECOS Studio 桌面应用中使用。')
-  }
-  if (!import.meta.env.DEV) {
-    throw new Error('瓦片生成当前仅在开发模式（pnpm tauri:dev）下可用。')
   }
 
   const { projectPath, layoutJsonRelative, stepKey } = params
@@ -122,19 +117,12 @@ export async function runLayoutTileGeneration(params: {
     }
   }
 
-  const scriptPath = await join(__ECOS_GUI_ROOT__, 'scripts', 'gen-mock-tiles.ts')
-  const cmd = Command.create(
-    'ecos-gen-mock-tiles',
-    ['tsx', scriptPath, '--input', inputAbs, '--out', outDir],
-    { cwd: __ECOS_GUI_ROOT__ },
-  )
-
-  const out = await cmd.execute()
-  const ok = out.code === 0 && out.signal === null
-  if (!ok) {
-    const msg = [out.stderr, out.stdout].filter(Boolean).join('\n') || `exit ${out.code} signal ${out.signal}`
-    throw new Error(msg)
-  }
+  await invoke('generate_layout_tiles', {
+    payload: {
+      layoutJsonPath: inputAbs,
+      outDir,
+    },
+  })
 
   await invoke('finalize_layout_tile_cache_meta', {
     payload: {

@@ -20,6 +20,8 @@ tauri-plugin-shell = "~2.3"
 tauri-plugin-store = "~2.4"
 ureq = "2"
 sha2 = "0.10"
+md5 = "0.7"
+flate2 = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 log = "0.4"
 env_logger = "0.11"

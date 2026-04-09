@@ -19,16 +19,6 @@
     "core:window:allow-start-dragging",
     "shell:allow-open",
     "shell:default",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "ecos-gen-mock-tiles",
-          "cmd": "npx",
-          "args": true
-        }
-      ]
-    },
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",

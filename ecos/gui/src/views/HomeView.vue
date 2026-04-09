@@ -152,6 +152,15 @@
               </div>
               <pre class="flow-log-pre">{{ seg.content }}</pre>
             </div>
+            <div v-if="flowLogLoading" class="flow-log-loading-more">
+              <i class="ri-loader-4-line flow-log-loading-more-icon"></i>
+              <span>Loading remaining step logs…</span>
+            </div>
+          </div>
+          <div v-else-if="flowLogLoading" class="flow-log-loading">
+            <i class="ri-loader-4-line flow-log-loading-icon"></i>
+            <p>Loading flow step logs…</p>
+            <span>Reading flow.json and log files from the workspace. Steps will appear as they load.</span>
           </div>
           <div v-else class="flow-log-placeholder">
             <i class="ri-terminal-line"></i>
@@ -253,6 +262,7 @@ const {
   flowLogSegments,
   flowLogStepName,
   flowLogError,
+  flowLogLoading,
 } = useHomeData()
 
 const flowLogScrollRef = ref<HTMLElement | null>(null)
@@ -1401,6 +1411,72 @@ html.dark .flow-log-pre {
   opacity: 0.65;
   text-align: center;
   max-width: 260px;
+}
+
+.flow-log-loading {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.flow-log-loading-icon {
+  font-size: 28px;
+  color: var(--text-secondary);
+  opacity: 0.75;
+  animation: flow-log-spin 0.85s linear infinite;
+}
+
+.flow-log-loading p {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.flow-log-loading span {
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  text-align: center;
+  max-width: 280px;
+  line-height: 1.45;
+}
+
+.flow-log-loading-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-top: 2px;
+  border-radius: 6px;
+  border: 1px dashed var(--border-color);
+  background: var(--bg-primary);
+  font-size: 10px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.flow-log-loading-more-icon {
+  font-size: 14px;
+  animation: flow-log-spin 0.85s linear infinite;
+}
+
+@keyframes flow-log-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ==================== Checklist Table ==================== */

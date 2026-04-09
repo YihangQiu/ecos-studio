@@ -110,6 +110,13 @@ export class TileManager {
   private _loadDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private readonly LOAD_DEBOUNCE_MS = 120
 
+  /** ViewportAnimator 每帧同时 emit moved+zoomed，用 rAF 合并为一次加载调度 */
+  private _viewportLoadKickRaf: number | null = null
+  private _lastViewportEventForLoad: { type?: string } | undefined
+  /** 程序化动画中限制 kick 次数，避免每帧重置 LOAD_DEBOUNCE_MS，使中途仍能触发 _loadMissingTiles */
+  private _lastAnimateTileLoadKickWall = 0
+  private readonly ANIMATE_TILE_LOAD_KICK_MIN_MS = 80
+
   private _renderQueue: RenderJob[] = []
   private readonly RENDER_BUDGET_MS = 12
   private _pendingRender = new Set<string>()
@@ -127,8 +134,8 @@ export class TileManager {
   /** 隐藏的 flat segment（EditManager 使用），key = `${layerIdx}:${x}:${y}:${w}:${h}` */
   readonly hiddenSegments = new Set<string>()
 
-  private _onMoved:  () => void
-  private _onZoomed: () => void
+  private _onMoved:  (e?: { type?: string }) => void
+  private _onZoomed: (e?: { type?: string }) => void
 
   /** 事件回调 */
   private _onTileLoadedCallbacks: Array<(key: string, entry: TileEntry) => void> = []
@@ -151,8 +158,31 @@ export class TileManager {
     this.rootContainer.addChild(this.globalContainer)
 
     viewport.addChild(this.rootContainer)
-    this._onMoved  = () => { this._dirty = true; this._debounceTileLoads() }
-    this._onZoomed = () => { this._dirty = true; this._debounceTileLoads() }
+    this._onMoved  = (e) => this._onViewportTransformEvent(e)
+    this._onZoomed = (e) => this._onViewportTransformEvent(e)
+  }
+
+  /** 每帧必须标脏以跑 _update；瓦片请求的 debounce 单独合并、节流（见 _scheduleDebouncedTileLoads） */
+  private _onViewportTransformEvent(e?: { type?: string }): void {
+    this._dirty = true
+    this._lastViewportEventForLoad = e
+    this._scheduleDebouncedTileLoads()
+  }
+
+  private _scheduleDebouncedTileLoads(): void {
+    if (this._viewportLoadKickRaf != null) return
+    this._viewportLoadKickRaf = requestAnimationFrame(() => {
+      this._viewportLoadKickRaf = null
+      const src = this._lastViewportEventForLoad
+      if (src?.type === 'animate') {
+        const now = performance.now()
+        if (now - this._lastAnimateTileLoadKickWall < this.ANIMATE_TILE_LOAD_KICK_MIN_MS) {
+          return
+        }
+        this._lastAnimateTileLoadKickWall = now
+      }
+      this._debounceTileLoads()
+    })
   }
 
   // ─── Z-level 容器管理 ───────────────────────────────────────────────────────
@@ -1101,6 +1131,10 @@ export class TileManager {
   // ─── 销毁 ────────────────────────────────────────────────────────────────────
   destroy(): void {
     Ticker.shared.remove(this._onTick)
+    if (this._viewportLoadKickRaf != null) {
+      cancelAnimationFrame(this._viewportLoadKickRaf)
+      this._viewportLoadKickRaf = null
+    }
     if (this._loadDebounceTimer) {
       clearTimeout(this._loadDebounceTimer)
       this._loadDebounceTimer = null

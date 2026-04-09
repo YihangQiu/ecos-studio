@@ -6,8 +6,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { useWorkspace } from './useWorkspace'
 import type { ImportedPdk } from '../types'
 
-
-const { showToast } = useWorkspace()
 /** 路径中是否包含中文或空格（不允许，会导致工具链异常） */
 function pathHasInvalidChars(path: string): boolean {
   const hasSpace = /\s/.test(path)
@@ -27,6 +25,7 @@ const isLoaded = ref(false)
  * 提供 PDK 的导入、持久化、扫描和删除功能
  */
 export function usePdkManager() {
+  const { showToast } = useWorkspace()
 
   // ============ 持久化读写 ============
 

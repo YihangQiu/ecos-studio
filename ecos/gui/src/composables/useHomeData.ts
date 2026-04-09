@@ -189,6 +189,8 @@ export function useHomeData() {
   const flowLogSegments = ref<FlowLogSegment[]>([])
   const flowLogStepName = ref('')
   const flowLogError = ref<string | null>(null)
+  /** True while flow.json and step log files are being read (progressive fill). */
+  const flowLogLoading = ref(false)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
 
@@ -380,10 +382,12 @@ export function useHomeData() {
   async function loadAllFlowStepLogsFromFlowPath(flowPathRemote: string): Promise<void> {
     if (!isInTauri || !flowPathRemote) {
       flowLogSegments.value = []
+      flowLogLoading.value = false
       return
     }
 
     flowLogError.value = null
+    flowLogLoading.value = true
 
     try {
       const projectPath = currentProject.value?.path
@@ -404,7 +408,14 @@ export function useHomeData() {
       const steps = flowData.steps ?? []
 
       const root = workspaceRoot.replace(/\\/g, '/')
-      const segments: FlowLogSegment[] = []
+      flowLogSegments.value = []
+
+      /** 每步后让出主线程，便于界面逐步渲染、避免长时间阻塞 */
+      const yieldToUi = () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve())
+        })
+
       for (const step of steps) {
         // Unstart / Ongoing：不读盘、不展示该步（避免「文件不存在」或多余进行中块）
         const stateNorm = (step.state ?? '').trim()
@@ -426,7 +437,7 @@ export function useHomeData() {
           content = `(Log file not found or unreadable)\n${logPath}`
         }
 
-        segments.push({
+        flowLogSegments.value.push({
           stepName: step.name,
           tool: step.tool,
           state: step.state,
@@ -434,14 +445,16 @@ export function useHomeData() {
           missing,
           content,
         })
+        await yieldToUi()
       }
 
-      flowLogSegments.value = segments
-      console.log('Flow step logs loaded:', segments.length, 'segments')
+      console.log('Flow step logs loaded:', flowLogSegments.value.length, 'segments')
     } catch (err) {
       console.error('Failed to load flow step logs:', err)
       flowLogSegments.value = []
       flowLogError.value = err instanceof Error ? err.message : String(err)
+    } finally {
+      flowLogLoading.value = false
     }
   }
 
@@ -578,6 +591,7 @@ export function useHomeData() {
     flowLogSegments.value = []
     flowLogStepName.value = ''
     flowLogError.value = null
+    flowLogLoading.value = false
     cleanupBlobUrl()
     cleanupMetricsBlobUrls()
     error.value = null
@@ -663,6 +677,7 @@ export function useHomeData() {
     flowLogSegments,
     flowLogStepName,
     flowLogError,
+    flowLogLoading,
     isLoading,
     error,
 

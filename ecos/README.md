@@ -12,7 +12,7 @@ ECOS Studio is a desktop application that provides an integrated development env
 
 ## Download
 
-- [ECOS-Studio v0.1.0-alpha.1 AppImage (amd64)](https://github.com/0xharry/ecos-studio/releases/download/v0.1.0-alpha.1/ECOS-Studio_0.1.0_amd64.AppImage)
+- [ECOS-Studio v0.1.0-alpha.2 AppImage (amd64)](https://github.com/openecos-projects/ecos-studio/releases/download/v0.1.0-alpha.2/ECOS-Studio_0.1.0_amd64.AppImage)
 
 ## Quick Start (For Developers)
 

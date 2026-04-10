@@ -1,22 +1,20 @@
 #!/usr/bin/env python
-# -*- encoding: utf-8 -*-
 
 from fastapi import APIRouter
 
-from ..schemas import (
-    ECCRequest,
-    ECCResponse
-)
+from ..schemas import ECCRequest, ECCResponse
 from ..services import ecc_service
 
 ecc_serv = ecc_service()
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
 
+
 @router.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "ok"}
+
 
 @router.post("/create_workspace", response_model=ECCResponse)
 async def create_workspace(request: ECCRequest):

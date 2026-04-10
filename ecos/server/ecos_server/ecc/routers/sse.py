@@ -1,16 +1,18 @@
 #!/usr/bin/env python
-# -*- encoding: utf-8 -*-
 """
 SSE 路由端点
 """
 
 import asyncio
+import contextlib
+
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from ecos_server.sse import event_manager
+
+from ..schemas import CMDEnum, ECCResponse, ResponseEnum
 from ..sse import to_sse_format
-from ..schemas import ECCResponse, CMDEnum, ResponseEnum
 
 router = APIRouter(prefix="/sse", tags=["sse"])
 
@@ -45,10 +47,8 @@ async def event_stream(workspace_id: str, request: Request):
 
         finally:
             heartbeat_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
-            except asyncio.CancelledError:
-                pass
 
     return StreamingResponse(
         generate(),
@@ -57,7 +57,7 @@ async def event_stream(workspace_id: str, request: Request):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
-        }
+        },
     )
 
 
@@ -70,12 +70,15 @@ async def heartbeat_loop(workspace_id: str):
     """
     while True:
         await asyncio.sleep(15)  # 每 15 秒发送心跳
-        event_manager.notify(workspace_id, ECCResponse(
-            cmd=CMDEnum.notify.value,
-            response=ResponseEnum.success.value,
-            data={"type": "heartbeat"},
-            message=[]
-        ))
+        event_manager.notify(
+            workspace_id,
+            ECCResponse(
+                cmd=CMDEnum.notify.value,
+                response=ResponseEnum.success.value,
+                data={"type": "heartbeat"},
+                message=[],
+            ),
+        )
 
 
 @router.get("/health")

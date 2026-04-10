@@ -1,15 +1,13 @@
 #!/usr/bin/env python
-# -*- encoding: utf-8 -*-
 """
 NotifyService - 全局通知服务单例
 
 提供全局的 SSE 通知能力，基于 workspace 进行通知分发。
 """
 
-from typing import Optional
+from ecos_server.sse import event_manager
 
 from ..schemas import ECCResponse
-from ecos_server.sse import event_manager
 
 
 class NotifyService:
@@ -30,10 +28,10 @@ class NotifyService:
     """
 
     def __init__(self):
-        self._workspace_id: Optional[str] = None
+        self._workspace_id: str | None = None
 
     @property
-    def workspace_id(self) -> Optional[str]:
+    def workspace_id(self) -> str | None:
         """获取当前 workspace_id"""
         return self._workspace_id
 
@@ -50,7 +48,7 @@ class NotifyService:
         """清除当前 workspace ID"""
         self._workspace_id = None
 
-    def get_workspace_id(self) -> Optional[str]:
+    def get_workspace_id(self) -> str | None:
         """
         获取当前 workspace ID
 
@@ -68,7 +66,7 @@ class NotifyService:
         """
         return self._workspace_id is not None
 
-    def notify(self, response: ECCResponse, workspace_id: Optional[str] = None) -> bool:
+    def notify(self, response: ECCResponse, workspace_id: str | None = None) -> bool:
         """
         发送通知
 
@@ -84,8 +82,7 @@ class NotifyService:
         if target_id is None:
             return False
 
-        event_manager.notify(workspace_id=target_id,
-                             response=response)
+        event_manager.notify(workspace_id=target_id, response=response)
         return True
 
     def notify_to(self, workspace_id: str, response: ECCResponse) -> None:
@@ -96,10 +93,9 @@ class NotifyService:
             workspace_id: 目标 workspace ID
             response: ECCResponse 通知对象
         """
-        event_manager.notify(workspace_id=workspace_id,
-                             response=response)
+        event_manager.notify(workspace_id=workspace_id, response=response)
 
-    def notify_step(self, step : str, step_path : str, home_page : str, log_file : str = ""):
+    def notify_step(self, step: str, step_path: str, home_page: str, log_file: str = ""):
         """
         update step status for home page
         "response" : {
@@ -114,28 +110,21 @@ class NotifyService:
         """
         from ..schemas.ecc import CMDEnum, ResponseEnum
         from ..schemas.info import NotifyEnum
+
         response = ECCResponse(
             cmd=CMDEnum.notify.value,
             response=ResponseEnum.success.value,
             data={
                 "step": step,
-                "id" : NotifyEnum.step.value,
-                "info": {
-                    "step_path" : step_path,
-                    "home_page" : home_page,
-                    "log_file" : log_file
-                }
+                "id": NotifyEnum.step.value,
+                "info": {"step_path": step_path, "home_page": home_page, "log_file": log_file},
             },
-
-            message=[f"update step {step} status."]
+            message=[f"update step {step} status."],
         )
 
         self.notify(response=response)
 
-    def notify_subflow(self,
-                       step : str,
-                       subflow_path : str,
-                       home_page : str=""):
+    def notify_subflow(self, step: str, subflow_path: str, home_page: str = ""):
         """
         update subflow status for step page
         "response" : {
@@ -149,19 +138,16 @@ class NotifyService:
         """
         from ..schemas.ecc import CMDEnum, ResponseEnum
         from ..schemas.info import NotifyEnum
+
         response = ECCResponse(
             cmd=CMDEnum.notify.value,
             response=ResponseEnum.success.value,
             data={
                 "step": step,
-                "id" : NotifyEnum.subflow.value,
-                "info": {
-                    "home_page" : home_page,
-                    "subflow_path" : subflow_path
-                }
+                "id": NotifyEnum.subflow.value,
+                "info": {"home_page": home_page, "subflow_path": subflow_path},
             },
-
-            message=[f"update step {step} status."]
+            message=[f"update step {step} status."],
         )
 
         self.notify(response=response)

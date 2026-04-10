@@ -1,5 +1,3 @@
-# -*- mode: python ; coding: utf-8 -*-
-
 """
 PyInstaller spec file for ECOS Studio API Server.
 
@@ -17,9 +15,9 @@ Usage:
 import os
 import sys
 import warnings
-from importlib import metadata
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+from PyInstaller.utils.hooks import collect_all
 
 # Server directory (ecos/server/)
 SERVER_DIR = Path(SPECPATH)
@@ -72,9 +70,14 @@ datas.extend(dp_datas)
 # We locate them from the source tree and bundle them at the expected paths.
 # (run_server.py sets CWD to _MEIPASS so the relative open() resolves.)
 _dreamplace_thirdparty = (
-    Path(SPECPATH).parent.parent / "ecc" / "chipcompiler" / "thirdparty"
-    / "ecc-dreamplace" / "thirdparty"
+    Path(SPECPATH).parent.parent
+    / "ecc"
+    / "chipcompiler"
+    / "thirdparty"
+    / "ecc-dreamplace"
+    / "thirdparty"
 )
+
 
 def _collect_thirdparty_files(subdir, targets, warning_msg):
     """Collect files from a DreamPlace thirdparty subdirectory into datas."""
@@ -88,6 +91,7 @@ def _collect_thirdparty_files(subdir, targets, warning_msg):
             found.add(fname)
     if found != targets:
         warnings.warn(f"{warning_msg} (missing from {src_dir})", stacklevel=2)
+
 
 _collect_thirdparty_files(
     "flute/lut.ICCAD2015",
@@ -206,25 +210,27 @@ hiddenimports.extend(ecc_hiddenimports)
 hiddenimports.extend(klayout_hiddenimports)
 hiddenimports.extend(torch_hiddenimports)
 hiddenimports.extend(dp_hiddenimports)
-hiddenimports.extend([
-    "ecos_server",
-    "ecos_server.main",
-    "ecos_server.ecc",
-    "ecos_server.ecc.routers",
-    "ecos_server.ecc.routers.sse",
-    "ecos_server.ecc.routers.workspace",
-    "ecos_server.ecc.schemas",
-    "ecos_server.ecc.schemas.ecc",
-    "ecos_server.ecc.schemas.info",
-    "ecos_server.ecc.services",
-    "ecos_server.ecc.services.ecc",
-    "ecos_server.ecc.services.info",
-    "ecos_server.ecc.sse",
-    "ecos_server.ecc.sse.models",
-    "ecos_server.ecc.sse.notify_service",
-    "ecos_server.sse",
-    "ecos_server.sse.manager",
-])
+hiddenimports.extend(
+    [
+        "ecos_server",
+        "ecos_server.main",
+        "ecos_server.ecc",
+        "ecos_server.ecc.routers",
+        "ecos_server.ecc.routers.sse",
+        "ecos_server.ecc.routers.workspace",
+        "ecos_server.ecc.schemas",
+        "ecos_server.ecc.schemas.ecc",
+        "ecos_server.ecc.schemas.info",
+        "ecos_server.ecc.services",
+        "ecos_server.ecc.services.ecc",
+        "ecos_server.ecc.services.info",
+        "ecos_server.ecc.sse",
+        "ecos_server.ecc.sse.models",
+        "ecos_server.ecc.sse.notify_service",
+        "ecos_server.sse",
+        "ecos_server.sse.manager",
+    ]
+)
 
 # --- Analysis & packaging ---
 a = Analysis(

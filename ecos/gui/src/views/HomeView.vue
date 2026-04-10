@@ -145,17 +145,25 @@
           <div v-if="flowLogError" class="flow-log-error">{{ flowLogError }}</div>
           <div v-else-if="flowLogSegments.length" ref="flowLogScrollRef" class="flow-log-scroll">
             <div
-              v-for="(seg, idx) in flowLogSegments"
-              :key="idx"
+              v-for="seg in flowLogSegments"
+              :key="flowLogStepKey(seg)"
               class="flow-log-step"
-              :class="{ failed: seg.failed, missing: seg.missing && !seg.failed }"
+              :class="{
+                failed: seg.failed,
+                missing: seg.missing && !seg.failed,
+                'is-live': seg.live,
+              }"
             >
               <div class="flow-log-step-header">
                 <span class="flow-log-step-title">{{ seg.stepName }}</span>
                 <span class="flow-log-step-meta">{{ seg.tool }}</span>
                 <span class="flow-log-step-state" :class="{ 'is-failed': seg.failed }">{{ seg.state }}</span>
               </div>
-              <pre class="flow-log-pre">{{ seg.content }}</pre>
+              <pre
+                class="flow-log-pre"
+                :data-flow-log-key="flowLogStepKey(seg)"
+                @scroll.passive="onFlowLogPreScroll"
+              >{{ seg.content }}</pre>
             </div>
             <div v-if="flowLogLoading" class="flow-log-loading-more">
               <i class="ri-loader-4-line flow-log-loading-more-icon"></i>
@@ -247,13 +255,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useParameters } from '@/composables/useParameters'
-import { useHomeData, type AnalysisChartItem } from '@/composables/useHomeData'
+import { useHomeData, type AnalysisChartItem, type FlowLogSegment } from '@/composables/useHomeData'
 
 // 注册 ECharts 组件（按需引入）
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
@@ -272,14 +280,49 @@ const {
 
 const flowLogScrollRef = ref<HTMLElement | null>(null)
 
+/** 距底部在此像素内视为「贴在底部」，新内容到达时自动跟到底 */
+const FLOW_LOG_TAIL_NEAR_BOTTOM_PX = 12
+
+/** 各步骤日志块是否应跟随尾部滚动；仅在为 false 时保留用户上翻位置 */
+const pinFlowLogTail = reactive<Record<string, boolean>>({})
+
+function flowLogStepKey(seg: FlowLogSegment): string {
+  return `${seg.stepName}\u001f${seg.tool}`
+}
+
+function onFlowLogPreScroll(ev: Event): void {
+  const pre = ev.target as HTMLElement
+  const key = pre.dataset.flowLogKey
+  if (!key) return
+  const gap = pre.scrollHeight - pre.scrollTop - pre.clientHeight
+  pinFlowLogTail[key] = gap <= FLOW_LOG_TAIL_NEAR_BOTTOM_PX
+}
+
+function scrollFlowLogPanelsToEnd(): void {
+  const root = flowLogScrollRef.value
+  if (!root) return
+  root.scrollTop = root.scrollHeight
+  root.querySelectorAll<HTMLElement>('.flow-log-pre').forEach((pre) => {
+    const key = pre.dataset.flowLogKey
+    if (!key) return
+    if (pinFlowLogTail[key] === false) return
+    pre.scrollTop = pre.scrollHeight
+  })
+}
+
 watch(
   flowLogSegments,
-  async () => {
-    await nextTick()
-    const el = flowLogScrollRef.value
-    if (el) {
-      el.scrollTop = el.scrollHeight
+  async (segs) => {
+    const alive = new Set(segs.map((s) => flowLogStepKey(s)))
+    for (const k of Object.keys(pinFlowLogTail)) {
+      if (!alive.has(k)) delete pinFlowLogTail[k]
     }
+    await nextTick()
+    // 内层 <pre> 在布局后才有正确 scrollHeight；rAF 再跟一轮以适配渐进写入
+    requestAnimationFrame(() => {
+      scrollFlowLogPanelsToEnd()
+      requestAnimationFrame(() => scrollFlowLogPanelsToEnd())
+    })
   },
   { deep: true }
 )
@@ -1452,6 +1495,16 @@ function stateClass(state: string): string {
   color: #f87171;
   border-color: rgba(248, 113, 113, 0.45);
   background: rgba(248, 113, 113, 0.08);
+}
+
+.flow-log-step.is-live .flow-log-pre {
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: inset 3px 0 0 0 rgba(59, 130, 246, 0.65);
+}
+
+html.dark .flow-log-step.is-live .flow-log-pre {
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: inset 3px 0 0 0 rgba(96, 165, 250, 0.55);
 }
 
 .flow-log-pre {

@@ -5,6 +5,11 @@ import { useWorkspace } from './useWorkspace'
 import { CMDEnum, StateEnum, StepEnum } from '@/api/type'
 import { runStepApi, rtl2gdsApi, type RunStepResponse } from '@/api/flow'
 
+// ============ 模块级运行标志（run_step / rtl2gds 共用）============
+
+/** 任意流程命令执行中为 true，供 Home flow log 等订阅，避免多实例 composable 状态不一致 */
+export const flowExecutionActive = ref(false)
+
 // ============ Composable ============
 
 /**
@@ -19,8 +24,8 @@ export function useFlowRunner() {
   const { showToast } = useWorkspace()
   const route = useRoute()
 
-  // 状态
-  const isRunning = ref(false)
+  // 状态（与 flowExecutionActive 同一引用）
+  const isRunning = flowExecutionActive
   const state = ref<StateEnum>(StateEnum.Invalid)
   const error = ref<string | null>(null)
   const lastRunResult = ref<RunStepResponse | null>(null)

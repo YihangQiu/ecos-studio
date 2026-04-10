@@ -2,7 +2,7 @@
 export interface InfoItem {
   label: string
   content: any
-  format: 'json' | 'csv' | 'text'
+  format: 'json' | 'csv' | 'text' | 'html'
 }
 
 // Info 消息的数据结构

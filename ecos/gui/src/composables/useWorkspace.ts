@@ -7,7 +7,7 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { exists, readTextFile } from '@tauri-apps/plugin-fs'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useToast } from 'primevue/usetoast'
-import { loadWorkspaceApi, createWorkspaceApi } from '../api'
+import { loadWorkspaceApi, createWorkspaceApi, waitForApiReady } from '../api'
 import { createSSEClient, type SSEClient, type ECCResponse } from '../api/sse'
 import { isTauri } from './useTauri'
 
@@ -40,6 +40,9 @@ const sseMessages = ref<ECCResponse[]>([])
 
 // 跨组件刷新信号：runFlow 完成后递增，DrawingArea / ThumbnailGallery 等组件监听以刷新数据
 const stepRefreshCounter = ref(0)
+
+/** 准备工作区就绪（含轮询 `/health`）时由 App 层显示全屏加载遮罩 */
+const apiBackendConnecting = ref(false)
 
 // Toast 实例（在首次组件上下文调用时初始化）
 let _toast: ReturnType<typeof useToast> | null = null
@@ -88,6 +91,29 @@ export function useWorkspace() {
       })
     } else {
       console.warn('[useWorkspace] Toast not initialized — called outside component context?')
+    }
+  }
+
+  /**
+   * Wait until the FastAPI `/health` endpoint responds (Tauri 下子进程可能晚于窗口出现).
+   * 在调用 load/create workspace 等依赖后端的操作前调用，避免竞态报错。
+   */
+  const ensureApiReady = async (): Promise<boolean> => {
+    apiBackendConnecting.value = true
+    try {
+      await waitForApiReady({ timeoutMs: 90_000 })
+      return true
+    } catch {
+      showToast({
+        severity: 'error',
+        summary: 'Backend unavailable',
+        detail:
+          'The API server did not respond in time. Wait a few seconds and try again, or restart the application.',
+        life: 8000
+      })
+      return false
+    } finally {
+      apiBackendConnecting.value = false
     }
   }
 
@@ -198,6 +224,7 @@ export function useWorkspace() {
 
             // reload 后需要重新通过 API 加载 workspace 状态并建立 SSE 连接
             try {
+              if (!(await ensureApiReady())) return
               const response = await loadWorkspaceApi(restored.path)
               if (response.response === 'success') {
                 const workspaceId = response.data.workspace_id || response.data.directory
@@ -283,6 +310,8 @@ export function useWorkspace() {
         // 权限请求失败不阻止继续，API 服务端有独立的文件访问权限
       }
 
+      if (!(await ensureApiReady())) return false
+
       // 3. 通过 HTTP API 加载项目状态
       const response = await loadWorkspaceApi(selectedPath)
       if (response.response === 'success') {
@@ -363,6 +392,8 @@ export function useWorkspace() {
         console.error('Failed to request access permission:', permError)
         // 权限请求失败不阻止继续，API 服务端有独立的文件访问权限
       }
+
+      if (!(await ensureApiReady())) return false
 
       // 3. 通过 HTTP API 创建项目（传递更多配置信息）
       // 将前端参数映射为后端期望的格式 (参考 ics55_parameter.json)
@@ -591,6 +622,8 @@ export function useWorkspace() {
     // 跨组件刷新
     stepRefreshCounter,
     triggerStepRefresh,
+    // 准备工作区时的全屏遮罩（见 App.vue）
+    apiBackendConnecting,
     // Toast
     showToast,
   }

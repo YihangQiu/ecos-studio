@@ -92,17 +92,52 @@ export async function initApiPort(): Promise<number> {
 
 /**
  * Check if the API server is available
+ *
+ * @param options.timeoutMs - Abort timeout for a single request (default 3000 ms).
+ *   Shorter values are appropriate when polling in a loop.
  */
-export async function checkApiHealth(): Promise<boolean> {
+export async function checkApiHealth(options?: { timeoutMs?: number }): Promise<boolean> {
+  const ms = options?.timeoutMs ?? 3000
   try {
     const response = await fetch(`${API_BASE_URL}/health`, {
       method: 'GET',
-      signal: AbortSignal.timeout(3000)
+      signal: AbortSignal.timeout(ms)
     })
     return response.ok
   } catch {
     return false
   }
+}
+
+export interface WaitForApiReadyOptions {
+  /** Total time to keep polling (default 90_000 ms) */
+  timeoutMs?: number
+  /** Delay between polls after a failed check (default 250 ms) */
+  intervalMs?: number
+  /** Per-attempt health request timeout (default 1500 ms) */
+  healthTimeoutMs?: number
+}
+
+/**
+ * Block until `/health` succeeds or the total timeout is exceeded.
+ * Use before workspace/critical API calls so the GUI does not race the FastAPI child process.
+ */
+export async function waitForApiReady(options?: WaitForApiReadyOptions): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? 90_000
+  const intervalMs = options?.intervalMs ?? 250
+  const healthTimeoutMs = options?.healthTimeoutMs ?? 1500
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (await checkApiHealth({ timeoutMs: healthTimeoutMs })) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+
+  throw new Error(
+    `API server did not respond on ${API_BASE_URL} within ${timeoutMs}ms`
+  )
 }
 
 export { API_BASE_URL, API_HOST, API_PORT }

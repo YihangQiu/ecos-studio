@@ -82,13 +82,19 @@
     <!-- Info 消息 -->
     <div v-else-if="message.type === 'info' && message.infoData"
       class="w-full min-w-0 p-2 rounded-lg text-sm bg-(--bg-secondary) text-(--text-primary) border border-(--border-color) overflow-hidden">
-      <!-- 标题栏 -->
+      <!-- 标题栏（全屏查阅在右上角） -->
       <div class="flex items-center gap-2 px-3 py-2 border-b border-(--border-color)">
-        <i class="ri-file-list-3-line text-(--accent-color)"></i>
-        <span class="font-semibold text-xs">{{ message.infoData.title }}</span>
-        <span class="text-[10px] text-(--text-secondary) bg-(--bg-primary) px-2 py-0.5 rounded">
-          {{ message.infoData.step }}
-        </span>
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          <i class="ri-file-list-3-line text-(--accent-color) shrink-0"></i>
+          <span class="font-semibold text-xs truncate">{{ message.infoData.title }}</span>
+          <span class="text-[10px] text-(--text-secondary) bg-(--bg-primary) px-2 py-0.5 rounded shrink-0">
+            {{ message.infoData.step }}
+          </span>
+        </div>
+        <button v-if="showFullscreenReportButton" type="button" class="info-report-header-fs-btn" title="查阅"
+          aria-label="查阅" @click.stop="openHeaderReportLightbox">
+          <i class="ri-fullscreen-fill"></i>
+        </button>
       </div>
 
       <!-- 数据内容 - 直接显示表格 -->
@@ -134,12 +140,44 @@
           </table>
         </div>
 
-        <!-- 文本格式 -->
+        <!-- HTML 报告：嵌入区缩小字号；全屏查阅见标题栏按钮 -->
+        <div v-else-if="item.format === 'html'" class="p-3 overflow-hidden">
+          <div class="rounded-lg overflow-hidden bg-(--bg-primary) border border-(--border-color)/30 max-h-[350px]">
+            <div class="info-html-embed markdown-body info-html-embed--compact overflow-auto max-h-[350px] p-3"
+              v-html="coerceHtmlString(item.content)"></div>
+          </div>
+        </div>
+
+        <!-- 文本格式：嵌入区缩小字号；全屏查阅见标题栏按钮 -->
         <div v-else class="p-3 overflow-hidden">
-          <pre
-            class="text-[11px] bg-(--bg-primary) p-3 rounded whitespace-pre overflow-auto max-h-[350px] font-mono text-content-pre"><code>{{ item.content }}</code></pre>
+          <div class="rounded-lg overflow-hidden bg-(--bg-primary) border border-(--border-color)/30 max-h-[350px]">
+            <pre
+              class="info-text-embed-compact bg-(--bg-primary) p-3 rounded-none whitespace-pre overflow-auto max-h-[350px] font-mono text-content-pre"><code>{{ item.content }}</code></pre>
+          </div>
         </div>
       </div>
+
+      <!-- 报告查阅 Lightbox（HTML / JSON / 纯文本；与 HomeView 图表预览一致：暗色遮罩 + 背景模糊） -->
+      <Teleport to="body">
+        <Transition name="lightbox">
+          <div v-if="reportLightbox.visible" class="info-html-lightbox-overlay" tabindex="-1"
+            @click="closeReportLightbox">
+            <div class="info-html-lightbox-content" @click.stop>
+              <div class="info-html-lightbox-header">
+                <span class="info-html-lightbox-title">{{ reportLightbox.title }}</span>
+                <button type="button" class="info-html-lightbox-close" aria-label="关闭" @click="closeReportLightbox">
+                  <i class="ri-close-line"></i>
+                </button>
+              </div>
+              <div class="info-html-lightbox-body">
+                <div v-if="reportLightbox.mode === 'html'" class="info-html-lightbox-inner markdown-body"
+                  v-html="reportLightbox.body"></div>
+                <pre v-else class="info-report-lightbox-pre"><code>{{ reportLightbox.body }}</code></pre>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
     </div>
 
     <!-- 其他消息类型 -->
@@ -218,6 +256,77 @@ const handleImageLoad = () => {
 
 // Map 图片加载状态
 const mapImageLoading = ref(true)
+
+/** 报告全屏查阅：HTML / JSON / 纯文本（与 HomeView 图表 lightbox 行为一致） */
+const reportLightbox = ref<{
+  visible: boolean
+  title: string
+  mode: 'html' | 'text' | 'json'
+  body: string
+}>({
+  visible: false,
+  title: '',
+  mode: 'text',
+  body: '',
+})
+
+function coerceReportBody(content: unknown): string {
+  return typeof content === 'string' ? content : String(content ?? '')
+}
+
+function formatJsonForLightbox(content: unknown): string {
+  try {
+    return JSON.stringify(content, null, 2)
+  } catch {
+    return coerceReportBody(content)
+  }
+}
+
+function openReportLightbox(title: string, content: unknown, mode: 'html' | 'text' | 'json') {
+  const body = mode === 'json' ? formatJsonForLightbox(content) : coerceReportBody(content)
+  reportLightbox.value = {
+    visible: true,
+    title: title || 'Report',
+    mode,
+    body,
+  }
+}
+
+function closeReportLightbox() {
+  reportLightbox.value.visible = false
+}
+
+function coerceHtmlString(content: unknown): string {
+  return coerceReportBody(content)
+}
+
+/** 标题栏全屏按钮：存在 HTML / JSON / 纯文本等可全屏内容时显示 */
+const showFullscreenReportButton = computed(() => {
+  if (props.message.type !== 'info' || !props.message.infoData?.items?.length) return false
+  return props.message.infoData.items.some(
+    i => i.format === 'html' || i.format === 'text' || i.format === 'json'
+  )
+})
+
+/** 优先 HTML → JSON → 纯文本（多段 items 时与 ThumbnailGallery 行为一致） */
+function openHeaderReportLightbox() {
+  const items = props.message.infoData?.items
+  if (!items?.length) return
+  const htmlItem = items.find(i => i.format === 'html')
+  if (htmlItem) {
+    openReportLightbox(htmlItem.label, htmlItem.content, 'html')
+    return
+  }
+  const jsonItem = items.find(i => i.format === 'json')
+  if (jsonItem) {
+    openReportLightbox(jsonItem.label, jsonItem.content, 'json')
+    return
+  }
+  const textItem = items.find(i => i.format === 'text')
+  if (textItem) {
+    openReportLightbox(textItem.label, textItem.content, 'text')
+  }
+}
 
 function handleMapImageLoad() {
   mapImageLoading.value = false
@@ -446,5 +555,184 @@ function csvRows(content: string): string[][] {
   40% {
     transform: translateY(-6px);
   }
+}
+
+/* 纯文本报告嵌入：缩小字号 */
+.info-text-embed-compact {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.info-text-embed-compact code {
+  font-size: inherit;
+}
+
+/* Lightbox 内纯文本报告：18px 等宽 */
+.info-report-lightbox-pre {
+  margin: 0;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1.45;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  color: var(--text-primary);
+}
+
+.info-report-lightbox-pre code {
+  font-size: inherit;
+  font-family: inherit;
+}
+
+/* HTML 报告嵌入：缩小字号（相对原 11px 纯文本略小） */
+.info-html-embed--compact {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.info-html-embed--compact :deep(pre),
+.info-html-embed--compact :deep(code) {
+  font-size: inherit;
+}
+
+.info-html-embed--compact :deep(h1) {
+  font-size: 1.35em;
+  font-weight: 700;
+}
+
+.info-html-embed--compact :deep(h2) {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+
+.info-html-embed--compact :deep(h3) {
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+/* Info 卡片标题栏：全屏查阅（与内嵌报告区分离，避免挡内容） */
+.info-report-header-fs-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.info-report-header-fs-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--accent-color);
+}
+
+/* HTML 报告查阅 Lightbox（与 HomeView 图表预览一致） */
+.info-html-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+  box-sizing: border-box;
+}
+
+.info-html-lightbox-content {
+  width: min(98vw, 1760px);
+  max-height: min(92vh, 960px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+}
+
+.info-html-lightbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.info-html-lightbox-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info-html-lightbox-close {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.info-html-lightbox-close:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.info-html-lightbox-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  background: var(--bg-primary);
+  overflow: auto;
+}
+
+.info-html-lightbox-inner {
+  font-size: 18px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.info-html-lightbox-inner :deep(pre) {
+  font-size: inherit;
+}
+
+.lightbox-enter-active,
+.lightbox-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.lightbox-enter-from,
+.lightbox-leave-to {
+  opacity: 0;
+}
+
+.lightbox-enter-active .info-html-lightbox-content,
+.lightbox-leave-active .info-html-lightbox-content {
+  transition: transform 0.2s ease;
+}
+
+.lightbox-enter-from .info-html-lightbox-content,
+.lightbox-leave-to .info-html-lightbox-content {
+  transform: scale(0.96);
 }
 </style>

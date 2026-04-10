@@ -25,6 +25,25 @@
 
     <!-- 全局新建工程向导 -->
     <NewProjectWizard v-if="showNewProjectWizard" @close="showNewProjectWizard = false" @create="handleWizardCreate" />
+
+    <!-- Full-screen loading while the workspace is being prepared (open/new project, session restore) -->
+    <Teleport to="body">
+      <Transition name="api-backend-overlay">
+        <div
+          v-if="apiBackendConnecting"
+          class="api-backend-overlay"
+          role="status"
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <div class="api-backend-panel">
+            <div class="api-backend-spinner" aria-hidden="true" />
+            <p class="api-backend-title">Preparing your workspace</p>
+            <p class="api-backend-sub">First load or restoring your project may take a moment</p>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -46,7 +65,8 @@ const router = useRouter()
 const themeStore = useThemeStore()
 const route = useRoute()
 const isWelcome = computed(() => route.path === '/')
-const { loadRecentProjects, currentProject, openProject, newProject } = useWorkspace()
+const { loadRecentProjects, currentProject, openProject, newProject, apiBackendConnecting } =
+  useWorkspace()
 const { loadPdks } = usePdkManager()
 const { showToast } = useWorkspace()
 // ---- 新建工程向导 ----
@@ -130,6 +150,84 @@ onUnmounted(() => {
   document.body.classList.remove('window-resizing')
 })
 </script>
+
+<style>
+/* Teleport 到 body，需非 scoped 才能作用在传送后的节点上 */
+.api-backend-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(5px);
+}
+
+.api-backend-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 40px;
+  border-radius: 12px;
+  background: var(--bg-primary);
+  border: 1px solid rgba(128, 128, 128, 0.28);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  min-width: 240px;
+}
+
+.api-backend-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  border-top-color: var(--accent-color, #4a9eff);
+  border-radius: 50%;
+  animation: api-backend-spin 0.75s linear infinite;
+}
+
+.api-backend-title {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #e8e8e8);
+}
+
+.api-backend-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary, #9ca3af);
+  text-align: center;
+  line-height: 1.45;
+}
+
+@keyframes api-backend-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.api-backend-overlay-enter-active,
+.api-backend-overlay-leave-active {
+  transition: opacity 0.22s ease;
+}
+
+.api-backend-overlay-enter-active .api-backend-panel,
+.api-backend-overlay-leave-active .api-backend-panel {
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+.api-backend-overlay-enter-from,
+.api-backend-overlay-leave-to {
+  opacity: 0;
+}
+
+.api-backend-overlay-enter-from .api-backend-panel,
+.api-backend-overlay-leave-to .api-backend-panel {
+  transform: scale(0.96);
+  opacity: 0.85;
+}
+</style>
 
 <style scoped>
 .app-wrapper {

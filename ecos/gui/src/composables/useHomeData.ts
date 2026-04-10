@@ -1,8 +1,10 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
-import { readTextFile, readFile } from '@tauri-apps/plugin-fs'
+import { readTextFile, readFile, watch as fsWatch, exists } from '@tauri-apps/plugin-fs'
+import { dirname } from '@tauri-apps/api/path'
 import { invoke } from '@tauri-apps/api/core'
 import { useWorkspace } from './useWorkspace'
 import { useTauri } from './useTauri'
+import { flowExecutionActive } from './useFlowRunner'
 import { getHomePageApi } from '@/api/flow'
 import { ResponseEnum } from '@/api/type'
 import type { ECCResponse } from '@/api/sse'
@@ -56,6 +58,8 @@ export interface FlowLogSegment {
   /** 磁盘上不存在或无法读取 */
   missing: boolean
   content: string
+  /** 当前 flow.json 中该步为 Ongoing，且处于 flowExecutionActive 会话中 */
+  live?: boolean
 }
 
 // ============ 共享 HomeData 缓存（模块级单例） ============
@@ -193,6 +197,15 @@ export function useHomeData() {
   const flowLogLoading = ref(false)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+
+  /** flow log 渐进刷新会话：递增后旧异步回调全部失效 */
+  let liveSession = 0
+  let unwatchFlowJson: (() => void) | null = null
+  let unwatchLog: (() => void) | null = null
+  let pollFlowJsonTimer: ReturnType<typeof setInterval> | null = null
+  let pollLogFallbackTimer: ReturnType<typeof setInterval> | null = null
+  let waitPathTimer: ReturnType<typeof setInterval> | null = null
+  let lastOngoingKey: string | null = null
 
   // 用于清理 blob URL
   let currentBlobUrl: string | null = null
@@ -379,6 +392,224 @@ export function useHomeData() {
     }
   }
 
+  function stepLogAbsPath(rootNorm: string, name: string, tool: string): string {
+    return `${rootNorm}/${name}_${tool}/log/${name}.log`
+  }
+
+  /**
+   * 从已解析的 flow.json 本地路径构建步骤日志列表。
+   * @param includeOngoingLive 为 true 时包含 Ongoing 步，并标记 live（用于 run 期间渐进展示）
+   */
+  async function buildFlowLogSegmentsFromFlowLocal(
+    flowLocal: string,
+    includeOngoingLive: boolean,
+  ): Promise<FlowLogSegment[]> {
+    const workspaceRoot = workspaceRootFromFlowPath(flowLocal)
+    if (!workspaceRoot) return []
+
+    const fileContent = await readTextFile(flowLocal)
+    const flowData = JSON.parse(fileContent) as { steps?: Array<{ name: string; tool: string; state: string }> }
+    const steps = flowData.steps ?? []
+    const root = workspaceRoot.replace(/\\/g, '/')
+    const out: FlowLogSegment[] = []
+
+    const yieldToUi = () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve())
+      })
+
+    for (const step of steps) {
+      const stateNorm = (step.state ?? '').trim()
+      const stateLc = stateNorm.toLowerCase()
+      if (stateLc === 'unstart') continue
+
+      if (stateLc === 'ongoing') {
+        if (!includeOngoingLive) continue
+        const logPath = stepLogAbsPath(root, step.name, step.tool)
+        let content = ''
+        let missing = false
+        try {
+          content = await readTextFile(logPath)
+        } catch {
+          missing = true
+          content = `(Log file not yet available or unreadable; waiting…)\n${logPath}`
+        }
+        out.push({
+          stepName: step.name,
+          tool: step.tool,
+          state: step.state,
+          failed: false,
+          missing,
+          content,
+          live: true,
+        })
+        await yieldToUi()
+        continue
+      }
+
+      const failed = step.state === 'Incomplete' || step.state === 'Invalid'
+      const logPath = stepLogAbsPath(root, step.name, step.tool)
+      let content = ''
+      let missing = false
+      try {
+        content = await readTextFile(logPath)
+      } catch {
+        missing = true
+        content = `(Log file not found or unreadable)\n${logPath}`
+      }
+      out.push({
+        stepName: step.name,
+        tool: step.tool,
+        state: step.state,
+        failed,
+        missing,
+        content,
+      })
+      await yieldToUi()
+    }
+    return out
+  }
+
+  function cleanupLogWatchOnly(): void {
+    unwatchLog?.()
+    unwatchLog = null
+    if (pollLogFallbackTimer != null) {
+      clearInterval(pollLogFallbackTimer)
+      pollLogFallbackTimer = null
+    }
+    if (waitPathTimer != null) {
+      clearInterval(waitPathTimer)
+      waitPathTimer = null
+    }
+  }
+
+  function cleanupFlowLogLiveWatch(): void {
+    unwatchFlowJson?.()
+    unwatchFlowJson = null
+    cleanupLogWatchOnly()
+    if (pollFlowJsonTimer != null) {
+      clearInterval(pollFlowJsonTimer)
+      pollFlowJsonTimer = null
+    }
+    lastOngoingKey = null
+  }
+
+  async function bindLogFileWatch(sid: number, logPath: string): Promise<void> {
+    cleanupLogWatchOnly()
+
+    const patchLive = async (): Promise<void> => {
+      if (sid !== liveSession) return
+      try {
+        const t = await readTextFile(logPath)
+        const i = flowLogSegments.value.findIndex((s) => s.live)
+        if (i >= 0) {
+          const cur = flowLogSegments.value[i]!
+          if (cur.content === t) return
+          flowLogSegments.value[i] = { ...cur, content: t, missing: false }
+        }
+      } catch {
+        /* 尚未写入或短暂不可读 */
+      }
+    }
+
+    function startBackupPoll(): void {
+      if (pollLogFallbackTimer != null) {
+        clearInterval(pollLogFallbackTimer)
+      }
+      pollLogFallbackTimer = setInterval(() => {
+        void patchLive()
+      }, 1200)
+    }
+
+    const tryAttachWatch = async (): Promise<boolean> => {
+      if (sid !== liveSession) return true
+      try {
+        if (await exists(logPath)) {
+          try {
+            unwatchLog = await fsWatch(logPath, () => {
+              void patchLive()
+            }, { delayMs: 100 })
+          } catch (we) {
+            console.warn('watch step log file failed, fallback poll:', we)
+          }
+          await patchLive()
+          startBackupPoll()
+          return true
+        }
+        const logDir = await dirname(logPath)
+        if (await exists(logDir)) {
+          try {
+            unwatchLog = await fsWatch(logDir, () => {
+              void patchLive()
+            }, { delayMs: 120 })
+          } catch (we) {
+            console.warn('watch log directory failed, fallback poll:', we)
+          }
+          await patchLive()
+          startBackupPoll()
+          return true
+        }
+      } catch (e) {
+        console.warn('bindLogFileWatch path check:', e)
+      }
+      return false
+    }
+
+    if (await tryAttachWatch()) {
+      return
+    }
+
+    pollLogFallbackTimer = setInterval(() => {
+      void patchLive()
+    }, 650)
+
+    waitPathTimer = setInterval(() => {
+      void (async () => {
+        if (sid !== liveSession) return
+        if (await tryAttachWatch()) {
+          if (waitPathTimer != null) {
+            clearInterval(waitPathTimer)
+            waitPathTimer = null
+          }
+        }
+      })()
+    }, 500)
+  }
+
+  async function refreshFlowLogLivePanel(sid: number): Promise<void> {
+    if (sid !== liveSession) return
+    let flowRemote = sharedHomeData.value?.flow
+    if (!flowRemote && currentProject.value?.path) {
+      const h = await fetchSharedHomeData(currentProject.value.path, isInTauri)
+      flowRemote = h?.flow ?? ''
+    }
+    if (!flowRemote) return
+
+    const flowLocal = convertToLocalPath(flowRemote)
+    if (!workspaceRootFromFlowPath(flowLocal)) return
+
+    flowLogError.value = null
+    try {
+      const segments = await buildFlowLogSegmentsFromFlowLocal(flowLocal, true)
+      if (sid !== liveSession) return
+      flowLogSegments.value = segments
+      const ongoing = segments.find((s) => s.live)
+      flowLogStepName.value = ongoing?.stepName ?? ''
+      const key = ongoing ? `${ongoing.stepName}|${ongoing.tool}` : null
+      if (key !== lastOngoingKey) {
+        lastOngoingKey = key
+        cleanupLogWatchOnly()
+        if (ongoing) {
+          const root = workspaceRootFromFlowPath(flowLocal)!.replace(/\\/g, '/')
+          const lp = stepLogAbsPath(root, ongoing.stepName, ongoing.tool)
+          await bindLogFileWatch(sid, lp)
+        }
+      }
+    } catch (err) {
+      console.error('refreshFlowLogLivePanel:', err)
+    }
+  }
+
   async function loadAllFlowStepLogsFromFlowPath(flowPathRemote: string): Promise<void> {
     if (!isInTauri || !flowPathRemote) {
       flowLogSegments.value = []
@@ -396,58 +627,13 @@ export function useHomeData() {
       }
 
       const flowLocal = convertToLocalPath(flowPathRemote)
-      const workspaceRoot = workspaceRootFromFlowPath(flowLocal)
-      if (!workspaceRoot) {
+      if (!workspaceRootFromFlowPath(flowLocal)) {
         flowLogError.value = 'Cannot resolve workspace root from flow.json path'
         flowLogSegments.value = []
         return
       }
 
-      const fileContent = await readTextFile(flowLocal)
-      const flowData = JSON.parse(fileContent) as { steps?: Array<{ name: string; tool: string; state: string }> }
-      const steps = flowData.steps ?? []
-
-      const root = workspaceRoot.replace(/\\/g, '/')
-      flowLogSegments.value = []
-
-      /** 每步后让出主线程，便于界面逐步渲染、避免长时间阻塞 */
-      const yieldToUi = () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve())
-        })
-
-      for (const step of steps) {
-        // Unstart / Ongoing：不读盘、不展示该步（避免「文件不存在」或多余进行中块）
-        const stateNorm = (step.state ?? '').trim()
-        const stateLc = stateNorm.toLowerCase()
-        if (stateLc === 'unstart' || stateLc === 'ongoing') {
-          continue
-        }
-
-        const failed = step.state === 'Incomplete' || step.state === 'Invalid'
-
-        const logPath = `${root}/${step.name}_${step.tool}/log/${step.name}.log`
-
-        let content = ''
-        let missing = false
-        try {
-          content = await readTextFile(logPath)
-        } catch {
-          missing = true
-          content = `(Log file not found or unreadable)\n${logPath}`
-        }
-
-        flowLogSegments.value.push({
-          stepName: step.name,
-          tool: step.tool,
-          state: step.state,
-          failed,
-          missing,
-          content,
-        })
-        await yieldToUi()
-      }
-
+      flowLogSegments.value = await buildFlowLogSegmentsFromFlowLocal(flowLocal, false)
       console.log('Flow step logs loaded:', flowLogSegments.value.length, 'segments')
     } catch (err) {
       console.error('Failed to load flow step logs:', err)
@@ -586,6 +772,8 @@ export function useHomeData() {
    * 清空所有数据
    */
   function clearHomeData(): void {
+    liveSession++
+    cleanupFlowLogLiveWatch()
     monitorData.value = null
     checklistItems.value = []
     flowLogSegments.value = []
@@ -597,6 +785,60 @@ export function useHomeData() {
     error.value = null
     invalidateSharedHomeData()
   }
+
+  // run_step / rtl2gds 期间：监听 flow.json 与当前步日志文件，渐进更新 Flow step log
+  watch(
+    flowExecutionActive,
+    async (active) => {
+      if (!isInTauri) return
+      if (!active) {
+        liveSession++
+        cleanupFlowLogLiveWatch()
+        try {
+          await ensureFlowLogsLoaded()
+        } catch (e) {
+          console.error('ensureFlowLogsLoaded after flow:', e)
+        }
+        return
+      }
+
+      if (!currentProject.value?.path) return
+
+      liveSession++
+      const sid = liveSession
+      cleanupFlowLogLiveWatch()
+
+      let flowRemote = sharedHomeData.value?.flow
+      if (!flowRemote) {
+        const h = await fetchSharedHomeData(currentProject.value.path, isInTauri)
+        flowRemote = h?.flow ?? ''
+      }
+      if (!flowRemote) {
+        console.warn('flow-log live: no flow path in home data')
+        return
+      }
+
+      const flowLocal = convertToLocalPath(flowRemote)
+      const projectPath = currentProject.value.path
+      if (projectPath) {
+        await requestPermission(projectPath)
+      }
+
+      try {
+        unwatchFlowJson = await fsWatch(flowLocal, () => {
+          void refreshFlowLogLivePanel(sid)
+        }, { delayMs: 340 })
+      } catch (e) {
+        console.warn('watch flow.json failed (using interval only):', e)
+      }
+
+      pollFlowJsonTimer = setInterval(() => {
+        void refreshFlowLogLivePanel(sid)
+      }, 1600)
+
+      await refreshFlowLogLivePanel(sid)
+    },
+  )
 
   // 监听当前项目变化，自动重新加载
   watch(
@@ -663,6 +905,8 @@ export function useHomeData() {
   // 组件卸载时清理 blob URL 并失效共享缓存
   // 确保下次 mount 时从磁盘重新读取最新 home.json
   onUnmounted(() => {
+    liveSession++
+    cleanupFlowLogLiveWatch()
     cleanupBlobUrl()
     cleanupMetricsBlobUrls()
     invalidateSharedHomeData()

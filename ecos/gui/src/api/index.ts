@@ -2,7 +2,14 @@
  * API module exports
  */
 
-export { alovaInstance, checkApiHealth, initApiPort, API_BASE_URL } from './client'
+export {
+  alovaInstance,
+  checkApiHealth,
+  initApiPort,
+  waitForApiReady,
+  type WaitForApiReadyOptions,
+  API_BASE_URL
+} from './client'
 export {
   loadWorkspaceApi,
   createWorkspaceApi,

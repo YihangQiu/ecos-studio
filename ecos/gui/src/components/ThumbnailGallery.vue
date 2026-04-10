@@ -258,12 +258,13 @@ function getInfoArray(value: unknown): string[] | null {
 }
 
 // 根据文件扩展名确定格式
-function getFileFormat(value: unknown): 'json' | 'csv' | 'text' {
+function getFileFormat(value: unknown): 'json' | 'csv' | 'text' | 'html' {
   const path = getPath(value)
   if (!path) return 'json' // 对象类型默认为 JSON 格式
   const ext = path.split('.').pop()?.toLowerCase()
   if (ext === 'json') return 'json'
   if (ext === 'csv') return 'csv'
+  if (ext === 'html' || ext === 'htm') return 'html'
   return 'text'
 }
 
@@ -395,7 +396,7 @@ async function handleKeyClick(key: string, value: unknown) {
     }
 
     // 构建 items 数组
-    const items: Array<{ label: string; content: unknown; format: 'json' | 'csv' | 'text' }> = []
+    const items: Array<{ label: string; content: unknown; format: 'json' | 'csv' | 'text' | 'html' }> = []
 
     // 添加文件内容
     items.push({

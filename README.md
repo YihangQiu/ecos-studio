@@ -64,6 +64,7 @@ For development setup, ecc-tools builds, ecc-dreamPlace builds, wheel builds, an
 
 ## Documentation
 
+- [ECOS Studio User Guide](ecos/docs/user-guide.md)
 - [ECOS GUI Development](ecos/README.md)
 - [ECC CLI Flow Runner](https://github.com/openecos-projects/ecc/blob/main/README.md#cli-flow-runner)
 - [ECC Documentation Index](https://github.com/openecos-projects/ecc/blob/main/docs/index.md)

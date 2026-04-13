@@ -16,6 +16,7 @@ Desktop application providing an integrated development environment for chip des
 - **Automated RTL-to-GDS Flow** - One-click execution from Verilog to layout
 - **Integrated Tools** - Yosys (synthesis), ECC-Tools (placement & routing), KLayout (visualization)
 - See [ecos/README.md](ecos/README.md) for usage guide
+- See [ECOS Studio User Guide](ecos/docs/user-guide.md) for detailed documentation
 
 ### 2. Open Source IP (`ip/`)
 Pre-verified infrastructure for composable design, including configurable SoC templates and common peripherals.

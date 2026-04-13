@@ -22,15 +22,15 @@ Desktop application providing an integrated development environment for chip des
 
 ### 2. Open Source IP (`ip/`)
 Pre-verified infrastructure for composable design, including configurable SoC templates and common peripherals.
-- [retroSoC](ip/retroSoC)
+- [retroSoC](https://github.com/retroSoC)
 
 ### 3. Open Source EDA (`ecc/`)
 **ECOS Chip Compiler (ECC)**: An open-source chip design automation solution that integrates EDA tools (Yosys, ECC-Tools, KLayout) to achieve complete RTL-to-GDS design flow.
-- [ECC Documentation](ecc/README.md)
+- [ECC Documentation](https://github.com/openecos-projects/ecc)
 
 ### 4. Open Source PDK (`pdk/`)
 Enabling mainstream manufacturing processes.
-- [ICsprout 55nm Open PDK](pdk/icsprout55-pdk)
+- [ICsprout 55nm Open PDK](https://github.com/openecos-projects/icsprout55-pdk)
 
 ---
 

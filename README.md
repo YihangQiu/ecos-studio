@@ -72,4 +72,9 @@ For development setup, ecc-tools builds, ecc-dreamPlace builds, wheel builds, an
 - [ECC CLI Flow Runner](https://github.com/openecos-projects/ecc/blob/main/README.md#cli-flow-runner)
 - [ECC Documentation Index](https://github.com/openecos-projects/ecc/blob/main/docs/index.md)
 
+## Community
 
+For any issues you'd like to discuss, feel free to join our WeChat community.
+<div align="center">
+  <img src="https://github.com/next-zeta/image/blob/main/WeChat_community.png" alt="WeChat community">
+</div>

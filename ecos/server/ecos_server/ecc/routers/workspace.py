@@ -17,7 +17,7 @@ async def health_check():
 
 
 @router.post("/create_workspace", response_model=ECCResponse)
-async def create_workspace(request: ECCRequest):
+def create_workspace(request: ECCRequest):
     """
     Create a new ECC project.
     """
@@ -25,7 +25,7 @@ async def create_workspace(request: ECCRequest):
 
 
 @router.post("/set_pdk_root", response_model=ECCResponse)
-async def set_pdk_root(request: ECCRequest):
+def set_pdk_root(request: ECCRequest):
     """
     Set PDK root path for backend runtime resolution.
     """
@@ -33,7 +33,7 @@ async def set_pdk_root(request: ECCRequest):
 
 
 @router.post("/load_workspace", response_model=ECCResponse)
-async def load_workspace(request: ECCRequest):
+def load_workspace(request: ECCRequest):
     """
     Open an existing ECC project.
     """
@@ -41,7 +41,7 @@ async def load_workspace(request: ECCRequest):
 
 
 @router.post("/delete_workspace", response_model=ECCResponse)
-async def delete_workspace(request: ECCRequest):
+def delete_workspace(request: ECCRequest):
     """
     Delete an existing ECC project.
     """
@@ -57,15 +57,18 @@ def rtl2gds(request: ECCRequest):
 
 
 @router.post("/run_step", response_model=ECCResponse)
-async def run_step(request: ECCRequest):
+def run_step(request: ECCRequest):
     """
     run step for current workspace.
+
+    Sync route (not async) so dispatch runs in the default thread pool and does not
+    block the asyncio event loop during long engine_flow.run_step() calls.
     """
     return ecc_serv.dispatch(request)
 
 
 @router.post("/get_info", response_model=ECCResponse)
-async def get_info(request: ECCRequest):
+def get_info(request: ECCRequest):
     """
     get information by step and id.
     """
@@ -73,7 +76,7 @@ async def get_info(request: ECCRequest):
 
 
 @router.post("/get_home_page", response_model=ECCResponse)
-async def get_home_page(request: ECCRequest):
+def get_home_page(request: ECCRequest):
     """
     get home page information.
     """

@@ -13,6 +13,7 @@ class InfoEnum(Enum):
     maps = "maps"  # maps for this step such as density map
     checklist = "checklist"  # step checklist
     sta = "sta"  # sta timing analysis
+    config = "config"  # step configuration snapshot (e.g. flow_config path)
 
 
 class NotifyEnum(Enum):

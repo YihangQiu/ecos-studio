@@ -6,56 +6,20 @@ import { useTauri } from './useTauri'
 import { fetchSharedHomeData, convertRemoteToLocalPath } from './useHomeData'
 
 // ============ 类型定义 ============
+// 与 ecc/chipcompiler/data/parameter.py 中 ICS55_PARAMETERS_TEMPLATE 及 workspace 写入的 PDK Root 对齐
 
-/** parameters.json 中的 Track 数据结构 */
-export interface ParameterTrack {
-  layer: string
-  'x start': number
-  'x step': number
-  'y start': number
-  'y step': number
-}
-
-/** parameters.json 中的 PDN IO 数据结构 */
-export interface ParameterPdnIO {
-  'net name': string
-  direction: string
-  'is power': boolean
-}
-
-/** parameters.json 中的 Global Connect 数据结构 */
-export interface ParameterGlobalConnect {
-  'net name': string
-  'instance pin name': string
-  'is power': boolean
-}
-
-/** parameters.json 中的 PDN Stripe 数据结构 */
-export interface ParameterStripe {
-  layer: string
-  'power net': string
-  'ground net': string
-  width: number
-  pitch: number
-  offset: number
-}
-
-/** parameters.json 中的 Connect Layers 数据结构 */
-export interface ParameterConnectLayers {
-  layers: string[]
-}
-
-/** parameters.json 完整数据结构 */
+/** parameters.json 磁盘结构（ICS55 扁平模板 + 可选 PDK Root） */
 export interface ParametersData {
   PDK: string
   Design: string
   'Top module': string
   Die: {
     Size: number[]
-    'Bounding box': string
+    Area?: number
   }
   Core: {
     Size: number[]
+    Area?: number
     'Bounding box': string
     Utilitization: number
     Margin: [number, number]
@@ -71,51 +35,23 @@ export interface ParametersData {
   'Frequency max [MHz]': number
   'Bottom layer': string
   'Top layer': string
-  Floorplan: {
-    'Tap distance': number
-    'Auto place pin': {
-      layer: string
-      width: number
-      height: number
-      sides: string[]
-    }
-    Tracks: ParameterTrack[]
-  }
-  PDN: {
-    IO: ParameterPdnIO[]
-    'Global connect': ParameterGlobalConnect[]
-    grid?: {
-      layer: string
-      'power net': string
-      'power ground'?: string
-      'ground net'?: string
-      width: number
-      offset: number
-    }
-    Grid?: {
-      layer: string
-      'power net': string
-      'ground net': string
-      width: number
-      offset: number
-    }
-    Stripe: ParameterStripe[]
-    'Connect layers': ParameterConnectLayers[]
-  }
+  'PDK Root'?: string
 }
 
-/** 前端使用的配置数据结构（驼峰命名） */
+/** 前端编辑用（驼峰） */
 export interface ConfigData {
   pdk: string
+  pdkRoot: string
   design: string
   topModule: string
-  die: { boundingBox: string, Size: number[] }
+  die: { Size: number[]; area: number }
   core: {
+    Size: number[]
+    area: number
     boundingBox: string
     utilization: number
     margin: [number, number]
     aspectRatio: number
-    Size: number[]
   }
   maxFanout: number
   targetDensity: number
@@ -127,35 +63,27 @@ export interface ConfigData {
   frequencyMax: number
   bottomLayer: string
   topLayer: string
-  floorplan: {
-    tapDistance: number
-    autoPlacePin: { layer: string; width: number; height: number }
-    tracks: { layer: string; xStart: number; xStep: number; yStart: number; yStep: number }[]
-  }
-  pdn: {
-    io: { netName: string; direction: string; isPower: boolean }[]
-    globalConnect: { netName: string; instancePinName: string; isPower: boolean }[]
-    grid: { layer: string; powerNet: string; groundNet: string; width: number; offset: number }
-    stripe: { layer: string; powerNet: string; groundNet: string; width: number; pitch: number; offset: number }[]
-    connectLayers: { layers: string[] }[]
-  }
 }
 
 // ============ 工具函数 ============
 
-/** 获取默认配置 */
+/** 用于 Bottom/Top 金属层下拉的常见顺序（与 PDK 文档一致即可） */
+const ROUTING_LAYER_ORDER = ['LI1', 'MET1', 'MET2', 'MET3', 'MET4', 'MET5', 'MET6', 'MET7', 'MET8']
+
 function getDefaultConfig(): ConfigData {
   return {
     pdk: '',
+    pdkRoot: '',
     design: '',
     topModule: '',
-    die: { boundingBox: '', Size: [] },
+    die: { Size: [], area: 0 },
     core: {
+      Size: [],
+      area: 0,
       boundingBox: '',
       utilization: 0.4,
-      margin: [10, 10],
-      aspectRatio: 1,
-      Size: []
+      margin: [2, 2],
+      aspectRatio: 1
     },
     maxFanout: 20,
     targetDensity: 0.3,
@@ -165,115 +93,57 @@ function getDefaultConfig(): ConfigData {
     routabilityOptFlag: true,
     clock: '',
     frequencyMax: 100,
-    bottomLayer: 'MET1',
-    topLayer: 'MET5',
-    floorplan: {
-      tapDistance: 58,
-      autoPlacePin: { layer: 'MET3', width: 300, height: 600 },
-      tracks: []
-    },
-    pdn: {
-      io: [],
-      globalConnect: [],
-      grid: { layer: 'MET1', powerNet: 'VDD', groundNet: 'VSS', width: 0.16, offset: 0 },
-      stripe: [],
-      connectLayers: []
-    }
+    bottomLayer: 'MET2',
+    topLayer: 'MET5'
   }
 }
 
-/** 将 parameters.json 数据转换为前端配置格式 */
 function transformParametersToConfig(data: ParametersData): ConfigData {
-  // 处理 grid 字段（兼容两种命名方式，PDN 可能不存在）
-  const gridData = data.PDN?.grid || data.PDN?.Grid
-  // 兼容不同命名：'ground net' 和 'power ground'
-  const groundNet = gridData?.['ground net'] || (gridData as { 'power ground'?: string })?.['power ground'] || 'VSS'
-
   return {
     pdk: data.PDK || '',
+    pdkRoot: data['PDK Root'] ?? '',
     design: data.Design || '',
     topModule: data['Top module'] || '',
-    die: { boundingBox: data.Die?.['Bounding box'] || '', Size: data.Die?.Size || [] },
-    core: {
-      boundingBox: data.Core?.['Bounding box'] || '',
-      utilization: data.Core?.Utilitization || 0.4,
-      margin: data.Core?.Margin || [10, 10],
-      aspectRatio: data.Core?.['Aspect ratio'] || 1,
-      Size: data.Core?.Size || []
+    die: {
+      Size: data.Die?.Size?.length ? [...data.Die.Size] : [],
+      area: data.Die?.Area ?? 0
     },
-    maxFanout: data['Max fanout'] || 20,
-    targetDensity: data['Target density'] || 0.3,
-    targetOverflow: data['Target overflow'] || 0.1,
-    globalRightPadding: data['Global right padding'] || 0,
+    core: {
+      Size: data.Core?.Size?.length ? [...data.Core.Size] : [],
+      area: data.Core?.Area ?? 0,
+      boundingBox: data.Core?.['Bounding box'] || '',
+      utilization: data.Core?.Utilitization ?? 0.4,
+      margin: data.Core?.Margin ?? [2, 2],
+      aspectRatio: data.Core?.['Aspect ratio'] ?? 1
+    },
+    maxFanout: data['Max fanout'] ?? 20,
+    targetDensity: data['Target density'] ?? 0.3,
+    targetOverflow: data['Target overflow'] ?? 0.1,
+    globalRightPadding: data['Global right padding'] ?? 0,
     cellPaddingX: data['Cell padding x'] ?? 600,
     routabilityOptFlag: !!data['Routability opt flag'],
     clock: data.Clock || '',
-    frequencyMax: data['Frequency max [MHz]'] || 100,
-    bottomLayer: data['Bottom layer'] || 'MET1',
-    topLayer: data['Top layer'] || 'MET5',
-    floorplan: {
-      tapDistance: data.Floorplan?.['Tap distance'] || 58,
-      autoPlacePin: {
-        layer: data.Floorplan?.['Auto place pin']?.layer || 'MET3',
-        width: data.Floorplan?.['Auto place pin']?.width || 300,
-        height: data.Floorplan?.['Auto place pin']?.height || 600
-      },
-      tracks: (data.Floorplan?.Tracks || []).map(t => ({
-        layer: t.layer,
-        xStart: t['x start'],
-        xStep: t['x step'],
-        yStart: t['y start'],
-        yStep: t['y step']
-      }))
-    },
-    pdn: {
-      io: (data.PDN?.IO || []).map(io => ({
-        netName: io['net name'],
-        direction: io.direction,
-        isPower: io['is power']
-      })),
-      globalConnect: (data.PDN?.['Global connect'] || []).map(gc => ({
-        netName: gc['net name'],
-        instancePinName: gc['instance pin name'],
-        isPower: gc['is power']
-      })),
-      grid: {
-        layer: gridData?.layer || 'MET1',
-        powerNet: gridData?.['power net'] || 'VDD',
-        groundNet: groundNet,
-        width: gridData?.width || 0.16,
-        offset: gridData?.offset || 0
-      },
-      stripe: (data.PDN?.Stripe || []).map(s => ({
-        layer: s.layer,
-        powerNet: s['power net'],
-        groundNet: s['ground net'],
-        width: s.width,
-        pitch: s.pitch,
-        offset: s.offset
-      })),
-      connectLayers: (data.PDN?.['Connect layers'] || []).map(cl => ({
-        layers: cl.layers
-      }))
-    }
+    frequencyMax: data['Frequency max [MHz]'] ?? 100,
+    bottomLayer: data['Bottom layer'] || 'MET2',
+    topLayer: data['Top layer'] || 'MET5'
   }
 }
 
-/** 将前端配置格式转换回 parameters.json 数据 */
 function transformConfigToParameters(config: ConfigData): ParametersData {
-  return {
+  const out: ParametersData = {
     PDK: config.pdk,
     Design: config.design,
     'Top module': config.topModule,
     Die: {
-      Size: [],
-      'Bounding box': config.die.boundingBox
+      Size: [...(config.die.Size || [])],
+      Area: config.die.area
     },
     Core: {
-      Size: [],
+      Size: [...(config.core.Size || [])],
+      Area: config.core.area,
       'Bounding box': config.core.boundingBox,
       Utilitization: config.core.utilization,
-      Margin: config.core.margin,
+      Margin: [...config.core.margin] as [number, number],
       'Aspect ratio': config.core.aspectRatio
     },
     'Max fanout': config.maxFanout,
@@ -285,54 +155,10 @@ function transformConfigToParameters(config: ConfigData): ParametersData {
     Clock: config.clock,
     'Frequency max [MHz]': config.frequencyMax,
     'Bottom layer': config.bottomLayer,
-    'Top layer': config.topLayer,
-    Floorplan: {
-      'Tap distance': config.floorplan.tapDistance,
-      'Auto place pin': {
-        layer: config.floorplan.autoPlacePin.layer,
-        width: config.floorplan.autoPlacePin.width,
-        height: config.floorplan.autoPlacePin.height,
-        sides: []
-      },
-      Tracks: config.floorplan.tracks.map(t => ({
-        layer: t.layer,
-        'x start': t.xStart,
-        'x step': t.xStep,
-        'y start': t.yStart,
-        'y step': t.yStep
-      }))
-    },
-    PDN: {
-      IO: config.pdn.io.map(io => ({
-        'net name': io.netName,
-        direction: io.direction,
-        'is power': io.isPower
-      })),
-      'Global connect': config.pdn.globalConnect.map(gc => ({
-        'net name': gc.netName,
-        'instance pin name': gc.instancePinName,
-        'is power': gc.isPower
-      })),
-      Grid: {
-        layer: config.pdn.grid.layer,
-        'power net': config.pdn.grid.powerNet,
-        'ground net': config.pdn.grid.groundNet,
-        width: config.pdn.grid.width,
-        offset: config.pdn.grid.offset
-      },
-      Stripe: config.pdn.stripe.map(s => ({
-        layer: s.layer,
-        'power net': s.powerNet,
-        'ground net': s.groundNet,
-        width: s.width,
-        pitch: s.pitch,
-        offset: s.offset
-      })),
-      'Connect layers': config.pdn.connectLayers.map(cl => ({
-        layers: cl.layers
-      }))
-    }
+    'Top layer': config.topLayer
   }
+  out['PDK Root'] = config.pdkRoot ?? ''
+  return out
 }
 
 // ============ Composable ============
@@ -345,22 +171,15 @@ export function useParameters() {
   const { isInTauri } = useTauri()
   const { currentProject } = useWorkspace()
 
-  // 配置数据
   const config = reactive<ConfigData>(getDefaultConfig())
   const isLoading = ref(false)
   const isSaving = ref(false)
   const error = ref<string | null>(null)
   const hasChanges = ref(false)
 
-  // 原始数据（用于检测变更）
   let originalConfig: string = ''
-
-  // 动态解析出的 parameters 文件本地路径（由 loadParameters 设置）
   let resolvedParametersPath: string = ''
 
-  /**
-   * 请求文件系统访问权限
-   */
   async function requestPermission(path: string): Promise<boolean> {
     try {
       await invoke('request_project_permission', { path })
@@ -371,18 +190,11 @@ export function useParameters() {
     }
   }
 
-  /**
-   * 将远程路径转换为本地项目路径
-   */
   function convertToLocalPath(remotePath: string): string {
     const projectPath = currentProject.value?.path
     return projectPath ? convertRemoteToLocalPath(remotePath, projectPath) : remotePath
   }
 
-  /**
-   * 从 home.json 动态获取 parameters 文件路径并加载配置参数
-   * 通过共享缓存获取 home.json 数据（不重复调用 API）
-   */
   async function loadParameters(): Promise<void> {
     if (!isInTauri || !currentProject.value?.path) {
       console.warn('Cannot load parameters: not in Tauri environment or no project is open')
@@ -397,7 +209,6 @@ export function useParameters() {
       const projectPath = currentProject.value.path
       await requestPermission(projectPath)
 
-      // 通过共享缓存获取 home.json 数据（去重，不会重复请求）
       const homeData = await fetchSharedHomeData(projectPath, isInTauri)
       if (!homeData) {
         console.warn('Failed to get home data')
@@ -414,39 +225,89 @@ export function useParameters() {
       const parametersPath = convertToLocalPath(homeData.parameters)
       console.log('Loading parameters from:', parametersPath)
 
-      // 读取 parameters 文件
       const fileContent = await readTextFile(parametersPath)
-      const parametersData: ParametersData = JSON.parse(fileContent)
+      const raw = JSON.parse(fileContent) as Record<string, unknown>
+
+      // 兼容旧版含 Floorplan/PDN 的文件：仅读取顶层 ICS55 字段，忽略扩展块
+      const parametersData: ParametersData = {
+        PDK: String(raw.PDK ?? ''),
+        Design: String(raw.Design ?? ''),
+        'Top module': String(raw['Top module'] ?? ''),
+        Die: normalizeDie(raw.Die),
+        Core: normalizeCore(raw.Core),
+        'Max fanout': Number(raw['Max fanout'] ?? 20),
+        'Target density': Number(raw['Target density'] ?? 0.3),
+        'Target overflow': Number(raw['Target overflow'] ?? 0.1),
+        'Global right padding': Number(raw['Global right padding'] ?? 0),
+        'Cell padding x': Number(raw['Cell padding x'] ?? 600),
+        'Routability opt flag': Number(raw['Routability opt flag'] ?? 1),
+        Clock: String(raw.Clock ?? ''),
+        'Frequency max [MHz]': Number(raw['Frequency max [MHz]'] ?? 100),
+        'Bottom layer': String(raw['Bottom layer'] ?? 'MET2'),
+        'Top layer': String(raw['Top layer'] ?? 'MET5'),
+        'PDK Root': raw['PDK Root'] != null ? String(raw['PDK Root']) : undefined
+      }
 
       console.log('Loaded parameters data:', parametersData)
 
-      // 缓存解析后的本地路径，供 saveParameters 使用
       resolvedParametersPath = parametersPath
 
-      // 转换数据格式并更新 config
       const transformedConfig = transformParametersToConfig(parametersData)
       Object.assign(config, transformedConfig)
       console.log('Loaded config:', config)
-      // 保存原始数据用于变更检测
       originalConfig = JSON.stringify(config)
       hasChanges.value = false
 
       console.log('Parameters loaded:', config)
-
     } catch (err) {
       console.error('Failed to load parameters:', err)
       error.value = err instanceof Error ? err.message : String(err)
-      // 加载失败时使用默认配置
       Object.assign(config, getDefaultConfig())
     } finally {
       isLoading.value = false
     }
   }
 
-  /**
-   * 保存配置到 parameters 文件
-   * 使用 loadParameters 解析得到的动态路径
-   */
+  function normalizeDie(d: unknown): ParametersData['Die'] {
+    if (!d || typeof d !== 'object') return { Size: [], Area: 0 }
+    const o = d as Record<string, unknown>
+    const size = o.Size
+    const arr = Array.isArray(size) ? size.map(Number) : []
+    return {
+      Size: arr,
+      Area: o.Area != null ? Number(o.Area) : 0
+    }
+  }
+
+  function normalizeCore(c: unknown): ParametersData['Core'] {
+    if (!c || typeof c !== 'object') {
+      return {
+        Size: [],
+        Area: 0,
+        'Bounding box': '',
+        Utilitization: 0.4,
+        Margin: [2, 2],
+        'Aspect ratio': 1
+      }
+    }
+    const o = c as Record<string, unknown>
+    const size = o.Size
+    const arr = Array.isArray(size) ? size.map(Number) : []
+    const margin = o.Margin
+    let m: [number, number] = [2, 2]
+    if (Array.isArray(margin) && margin.length >= 2) {
+      m = [Number(margin[0]), Number(margin[1])]
+    }
+    return {
+      Size: arr,
+      Area: o.Area != null ? Number(o.Area) : 0,
+      'Bounding box': String(o['Bounding box'] ?? ''),
+      Utilitization: Number(o.Utilitization ?? 0.4),
+      Margin: m,
+      'Aspect ratio': Number(o['Aspect ratio'] ?? 1)
+    }
+  }
+
   async function saveParameters(): Promise<boolean> {
     if (!isInTauri || !currentProject.value?.path) {
       console.warn('Cannot save parameters: not in Tauri environment or no project is open')
@@ -467,19 +328,16 @@ export function useParameters() {
 
       console.log('Saving parameters to:', resolvedParametersPath)
 
-      // 转换为 parameters.json 格式
       const parametersData = transformConfigToParameters(config)
       const fileContent = JSON.stringify(parametersData, null, 4)
 
       await writeTextFile(resolvedParametersPath, fileContent)
 
-      // 更新原始数据
       originalConfig = JSON.stringify(config)
       hasChanges.value = false
 
       console.log('Parameters saved successfully')
       return true
-
     } catch (err) {
       console.error('Failed to save parameters:', err)
       error.value = err instanceof Error ? err.message : String(err)
@@ -489,9 +347,6 @@ export function useParameters() {
     }
   }
 
-  /**
-   * 重置配置到上次保存的状态
-   */
   function resetParameters(): void {
     if (originalConfig) {
       Object.assign(config, JSON.parse(originalConfig))
@@ -499,14 +354,10 @@ export function useParameters() {
     }
   }
 
-  /**
-   * 重新加载配置
-   */
   async function refreshParameters(): Promise<void> {
     await loadParameters()
   }
 
-  // 监听配置变化
   watch(
     config,
     () => {
@@ -515,7 +366,6 @@ export function useParameters() {
     { deep: true }
   )
 
-  // 监听当前项目变化，自动重新加载
   watch(
     () => currentProject.value?.path,
     async (newPath) => {
@@ -530,113 +380,43 @@ export function useParameters() {
     { immediate: true }
   )
 
-  // 组件挂载时也尝试加载
   onMounted(async () => {
     if (currentProject.value?.path) {
       await loadParameters()
     }
   })
 
-  // ============ 动态选项计算 ============
-
-  /** 从 Tracks 中提取所有 layer 选项 */
   const layerOptions = computed(() => {
-    const layers = new Set<string>()
-    // 从 tracks 中提取
-    config.floorplan.tracks.forEach(t => layers.add(t.layer))
-    // 从 stripe 中提取
-    config.pdn.stripe.forEach(s => layers.add(s.layer))
-    // 从 connectLayers 中提取
-    config.pdn.connectLayers.forEach(cl => cl.layers.forEach(l => layers.add(l)))
-    // 添加当前使用的 layer
-    if (config.bottomLayer) layers.add(config.bottomLayer)
-    if (config.topLayer) layers.add(config.topLayer)
-    if (config.floorplan.autoPlacePin.layer) layers.add(config.floorplan.autoPlacePin.layer)
-    if (config.pdn.grid.layer) layers.add(config.pdn.grid.layer)
-
-    // 定义排序优先级（MET 层按数字排序，其他放后面）
-    const sortOrder = (layer: string): number => {
-      const metMatch = layer.match(/^MET(\d+)$/i)
-      if (metMatch) return parseInt(metMatch[1])
-      if (layer.toLowerCase() === 'li1') return 0
-      return 100 + layer.charCodeAt(0) // 其他 layer 按字母排序放后面
-    }
-
-    return Array.from(layers)
-      .sort((a, b) => sortOrder(a) - sortOrder(b))
-      .map(layer => ({ label: layer, value: layer }))
+    return ROUTING_LAYER_ORDER.map(layer => ({ label: layer, value: layer }))
   })
 
-  /** 从 PDN.IO 中提取所有 direction 选项 */
-  const directionOptions = computed(() => {
-    const directions = new Set<string>()
-    config.pdn.io.forEach(io => {
-      if (io.direction) directions.add(io.direction)
-    })
-    // 确保至少有基本选项
-    directions.add('INOUT')
-    directions.add('INPUT')
-    directions.add('OUTPUT')
-
-    return Array.from(directions).map(dir => ({ label: dir, value: dir }))
-  })
-
-  /** layer 列表（用于范围判断） */
   const layersList = computed(() => {
-    return layerOptions.value.map(opt => opt.value)
+    const opts = layerOptions.value.map(o => o.value)
+    const lo = opts.indexOf(config.bottomLayer)
+    const hi = opts.indexOf(config.topLayer)
+    if (lo === -1 || hi === -1) return opts
+    const a = Math.min(lo, hi)
+    const b = Math.max(lo, hi)
+    return opts.slice(a, b + 1)
   })
 
-  /** 获取默认 Track 数据 */
-  const getDefaultTrack = () => {
-    const defaultLayer = layersList.value[0] || 'MET1'
-    return { layer: defaultLayer, xStart: 0, xStep: 200, yStart: 0, yStep: 200 }
-  }
-
-  /** 获取默认 PDN IO 数据 */
-  const getDefaultPdnIO = () => {
-    return { netName: '', direction: 'INOUT', isPower: true }
-  }
-
-  /** 获取默认 Global Connect 数据 */
-  const getDefaultGlobalConnect = () => {
-    return { netName: '', instancePinName: '', isPower: true }
-  }
-
-  /** 获取默认 Stripe 数据 */
-  const getDefaultStripe = () => {
-    const defaultLayer = layersList.value[0] || 'MET1'
-    return { layer: defaultLayer, powerNet: 'VDD', groundNet: 'VSS', width: 1, pitch: 16, offset: 0.5 }
-  }
-
-  /** 获取默认 Connect Layers 数据 */
-  const getDefaultConnectLayers = () => {
+  const isLayerInRange = (layer: string): boolean => {
     const layers = layersList.value
-    const layer1 = layers[0] || 'MET1'
-    const layer2 = layers[1] || 'MET2'
-    return { layers: [layer1, layer2] }
+    const bottomIndex = layers.indexOf(config.bottomLayer)
+    const topIndex = layers.indexOf(config.topLayer)
+    const currentIndex = layers.indexOf(layer)
+    return currentIndex >= bottomIndex && currentIndex <= topIndex
   }
 
   return {
-    // 状态
     config,
     isLoading,
     isSaving,
     error,
     hasChanges,
-
-    // 动态选项
     layerOptions,
-    directionOptions,
     layersList,
-
-    // 默认值工厂函数
-    getDefaultTrack,
-    getDefaultPdnIO,
-    getDefaultGlobalConnect,
-    getDefaultStripe,
-    getDefaultConnectLayers,
-
-    // 方法
+    isLayerInRange,
     loadParameters,
     saveParameters,
     resetParameters,

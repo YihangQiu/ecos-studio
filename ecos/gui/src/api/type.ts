@@ -17,7 +17,8 @@ export enum InfoEnum {
   analysis = "analysis",
   maps = "maps",
   checklist = "checklist",
-  sta = "sta"
+  sta = "sta",
+  config = "config"
 }
 
 export enum StepEnum {

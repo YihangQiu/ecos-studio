@@ -273,6 +273,23 @@ export function useFlowStages() {
     }
   }
 
+  /**
+   * 乐观更新：将指定 path 的 run 步骤设为 Ongoing
+   * 单步运行 run_step 时调用，与侧栏第一栏状态指示一致
+   */
+  function setRunStepOngoingByPath(stepPath: string): void {
+    if (!stepPath) return
+    const key = stepPath.toLowerCase()
+    const idx = dynamicFlowStages.value.findIndex(
+      (s) => s.path.toLowerCase() === key
+    )
+    if (idx !== -1) {
+      dynamicFlowStages.value[idx] = {
+        ...dynamicFlowStages.value[idx],
+        state: 'Ongoing',
+      }
+    }
+  }
 
   /**
    * 重新加载流程步骤
@@ -367,7 +384,8 @@ export function useFlowStages() {
     loadFlowStages,
     loadFlowStagesFromPath,
     refreshFlowStages,
-    clearFlowStages,  
-    setFirstRunStepOngoing
+    clearFlowStages,
+    setFirstRunStepOngoing,
+    setRunStepOngoingByPath,
   }
 }

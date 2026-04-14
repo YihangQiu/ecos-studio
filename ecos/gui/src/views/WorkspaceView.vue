@@ -15,10 +15,10 @@ import DrcViolationPanel from '../components/DrcViolationPanel.vue'
 const layoutState = useLayoutState()
 const route = useRoute()
 
-/** 图片预览模式不显示图层/属性栏；勿用整树 :key 切换，否则 DrawingArea 会重挂载并再次跑 handleStageChange，把矢量版图打回图片预览 */
+/** Image preview mode hides layer/property columns; avoid :key on the whole tree or DrawingArea remounts and resets the layout view */
 const showLayoutSidePanels = computed(() => layoutState.renderMode.value === 'layout')
 
-/** 仅 DRC 路由显示违例面板（与 DrawingArea 当前步骤段一致） */
+/** DRC route only: show violation panel (matches DrawingArea step) */
 const isDrcStep = computed(() => {
   const pathParts = route.path.split('/')
   const stage = pathParts[pathParts.length - 1] || ''
@@ -50,7 +50,7 @@ const handleMouseDown = (e: MouseEvent) => {
       document.body.classList.add('splitter-resizing-vertical')
     }
 
-    // 立即清除任何已存在的选区（Linux WebKitGTK 兼容）
+    // Clear any selection (Linux WebKitGTK)
     window.getSelection()?.removeAllRanges()
   }
 }
@@ -78,7 +78,7 @@ onUnmounted(() => {
 <template>
   <div class="editor-view">
     <Splitter ref="mainSplitter" class="flex-1 h-full border-none min-w-0">
-      <!-- Left: Drawing + Thumbnails（无中间栏时 60+15 合并为 75） -->
+      <!-- Left: Drawing + thumbnails (60+15 merged to 75 when middle column hidden) -->
       <SplitterPanel :size="showLayoutSidePanels ? 60 : 75" :minSize="35" class="flex flex-col min-w-0">
         <Splitter layout="vertical" class="h-full border-none">
           <SplitterPanel :size="70" :minSize="30" class="flex flex-col">
@@ -90,7 +90,7 @@ onUnmounted(() => {
         </Splitter>
       </SplitterPanel>
 
-      <!-- Middle: Layout panels（仅矢量/Tile 版图模式） -->
+      <!-- Middle: layout panels (vector/tile mode only) -->
       <SplitterPanel
         v-if="showLayoutSidePanels"
         :size="15"
@@ -139,14 +139,14 @@ onUnmounted(() => {
 :deep(.p-splitter) {
   background: transparent;
   border: none;
-  /* 优化性能 */
-  contain: layout style;
+  /* layout only; avoid paint containment on panels (conflicts with wide tables + scrollbars in WebKitGTK) */
+  contain: layout;
 }
 
+/* No contain on panels — wide min-content (e.g. Floorplan tables) can skew flex; right column shrinks */
 :deep(.p-splitter-panel) {
-  /* 优化重绘性能 */
-  contain: layout style paint;
-  will-change: auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 :deep(.p-splitter-gutter) {
@@ -155,7 +155,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 减少重绘 */
+  /* Fewer repaints */
   will-change: background-color;
 }
 
@@ -166,35 +166,36 @@ onUnmounted(() => {
 
 :deep(.p-splitter-gutter-handle) {
   display: none !important;
-  /* 隐藏默认的大手柄 */
+  /* Hide default large handle */
 }
 
-/* 针对横向分割条 */
+/* Horizontal splitter gutter */
 :deep(.p-splitter-horizontal > .p-splitter-gutter) {
   width: 2px !important;
   cursor: col-resize;
 }
 
-/* 针对纵向分割条 */
+/* Vertical splitter gutter */
 :deep(.p-splitter-vertical > .p-splitter-gutter) {
   height: 2px !important;
   cursor: row-resize;
 }
 
-/* 确保 Splitter 面板可以正确收缩 */
-:deep(.p-splitter-panel) {
-  min-width: 0;
-  overflow: hidden;
-}
-
-/* Chat 面板严格约束 - 防止内容撑开 */
-.chat-panel {
-  contain: layout style size;
+/*
+ * Right Chat/Inspector: PrimeVue sets flex-basis; theme often uses flex:1 with flex-shrink 1.
+ * Wide Floorplan tables have huge min-content and shrink this column; !important prevents flex-shrink.
+ */
+:deep(.p-splitter-panel.chat-panel) {
   box-sizing: border-box;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
 }
 
-:deep(.chat-panel > *) {
-  max-width: 100%;
+/* Fill column width; avoid subtree content width affecting parent flex */
+:deep(.chat-panel.p-splitter-panel > *) {
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 </style>

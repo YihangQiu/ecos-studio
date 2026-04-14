@@ -416,7 +416,7 @@ import { useWorkspace } from '@/composables/useWorkspace'
 const themeStore = useThemeStore()
 
 // 流程阶段管理
-const { flowStages, refreshFlowStages, setFirstRunStepOngoing } = useFlowStages()
+const { flowStages, refreshFlowStages, setFirstRunStepOngoing, setRunStepOngoingByPath } = useFlowStages()
 
 // 子流程管理
 const {
@@ -506,6 +506,7 @@ const handleRunFlow = async () => {
     await runAllFlow()
     await refreshFlowStages()
   } else {
+    setRunStepOngoingByPath(currentStage.value)
     await runFlow()
     await Promise.all([
       refreshCurrentSubflow(),

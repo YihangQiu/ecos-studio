@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { reactive, computed } from 'vue'
+import { computed } from 'vue'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
 import Checkbox from 'primevue/checkbox'
 import Select from 'primevue/select'
 import { useParameters } from '@/composables/useParameters'
 
-// 从 parameters.json 加载配置参数
 const {
   config,
   isLoading,
@@ -16,41 +15,13 @@ const {
   saveParameters,
   resetParameters,
   refreshParameters,
-  // 动态选项
   layerOptions,
-  directionOptions,
-  layersList,
-  // 默认值工厂函数
-  getDefaultTrack,
-  getDefaultPdnIO,
-  getDefaultGlobalConnect,
-  getDefaultStripe,
-  getDefaultConnectLayers
+  isLayerInRange
 } = useParameters()
 
 const utilizationPercent = computed(() => Math.round(config.core.utilization * 100))
 const densityPercent = computed(() => Math.round(config.targetDensity * 100))
 const overflowPercent = computed(() => Math.round(config.targetOverflow * 100))
-
-const isLayerInRange = (layer: string): boolean => {
-  const layers = layersList.value
-  const bottomIndex = layers.indexOf(config.bottomLayer)
-  const topIndex = layers.indexOf(config.topLayer)
-  const currentIndex = layers.indexOf(layer)
-  return currentIndex >= bottomIndex && currentIndex <= topIndex
-}
-
-// CRUD
-const addTrack = () => config.floorplan.tracks.push(getDefaultTrack())
-const removeTrack = (i: number) => config.floorplan.tracks.splice(i, 1)
-const addPdnIO = () => config.pdn.io.push(getDefaultPdnIO())
-const removePdnIO = (i: number) => config.pdn.io.splice(i, 1)
-const addGlobalConnect = () => config.pdn.globalConnect.push(getDefaultGlobalConnect())
-const removeGlobalConnect = (i: number) => config.pdn.globalConnect.splice(i, 1)
-const addStripe = () => config.pdn.stripe.push(getDefaultStripe())
-const removeStripe = (i: number) => config.pdn.stripe.splice(i, 1)
-const addConnectLayer = () => config.pdn.connectLayers.push(getDefaultConnectLayers())
-const removeConnectLayer = (i: number) => config.pdn.connectLayers.splice(i, 1)
 
 const saveConfig = async () => {
   const success = await saveParameters()
@@ -66,23 +37,10 @@ const resetConfig = () => {
   console.log('Configuration reset to last saved state')
 }
 
-// 展开/折叠状态
-const expandedSections = reactive({
-  tracks: true,
-  pdnIo: true,
-  globalConnect: true,
-  stripe: true,
-  connectLayers: true
-})
-
-const toggleSection = (key: keyof typeof expandedSections) => {
-  expandedSections[key] = !expandedSections[key]
-}
 </script>
 
 <template>
   <div class="config-view">
-    <!-- 顶栏 -->
     <header class="topbar">
       <div class="topbar-left">
         <i class="ri-cpu-line"></i>
@@ -114,10 +72,8 @@ const toggleSection = (key: keyof typeof expandedSections) => {
       </div>
     </header>
 
-    <!-- Grid 布局内容 -->
     <main class="content-container">
       <div class="content-grid">
-        <!-- 第一行：基础配置 -->
         <section class="card">
           <div class="card-head">
             <i class="ri-cpu-line c-indigo"></i>
@@ -148,6 +104,10 @@ const toggleSection = (key: keyof typeof expandedSections) => {
                 <InputNumber v-model="config.frequencyMax" size="small" />
               </div>
             </div>
+            <div class="field">
+              <label>PDK Root</label>
+              <InputText v-model="config.pdkRoot" size="small" placeholder="Absolute path to PDK" />
+            </div>
           </div>
         </section>
 
@@ -168,8 +128,9 @@ const toggleSection = (key: keyof typeof expandedSections) => {
               </div>
             </div>
             <div class="field">
-              <label>Bounding Box</label>
-              <InputText v-model="config.die.boundingBox" size="small" placeholder="x1 y1 x2 y2" />
+              <label>Area</label>
+              <InputNumber v-model="config.die.area" size="small" suffix=" μm²" :minFractionDigits="0"
+                :maxFractionDigits="6" />
             </div>
           </div>
         </section>
@@ -219,37 +180,6 @@ const toggleSection = (key: keyof typeof expandedSections) => {
 
         <section class="card">
           <div class="card-head">
-            <i class="ri-settings-3-line c-cyan"></i>
-            <span>Floorplan</span>
-          </div>
-          <div class="card-body">
-            <div class="field-row">
-              <div class="field">
-                <label>Tap Distance</label>
-                <InputNumber v-model="config.floorplan.tapDistance" size="small" suffix=" μm" />
-              </div>
-              <div class="field">
-                <label>Pin Layer</label>
-                <Select v-model="config.floorplan.autoPlacePin.layer" :options="layerOptions" optionLabel="label"
-                  optionValue="value" size="small" />
-              </div>
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label>Pin Width</label>
-                <InputNumber v-model="config.floorplan.autoPlacePin.width" size="small" suffix=" nm" />
-              </div>
-              <div class="field">
-                <label>Pin Height</label>
-                <InputNumber v-model="config.floorplan.autoPlacePin.height" size="small" suffix=" nm" />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- 第二行 -->
-        <section class="card">
-          <div class="card-head">
             <i class="ri-box-3-line c-green"></i>
             <span>Core</span>
           </div>
@@ -265,8 +195,13 @@ const toggleSection = (key: keyof typeof expandedSections) => {
               </div>
             </div>
             <div class="field">
+              <label>Area</label>
+              <InputNumber v-model="config.core.area" size="small" suffix=" μm²" :minFractionDigits="0"
+                :maxFractionDigits="6" />
+            </div>
+            <div class="field">
               <label>Bounding Box</label>
-              <InputText v-model="config.core.boundingBox" size="small" placeholder="x1 y1 x2 y2" />
+              <InputText v-model="config.core.boundingBox" size="small" placeholder="(x1 , y1) (x2 , y2)" />
             </div>
             <div class="field">
               <div class="label-row">
@@ -318,229 +253,6 @@ const toggleSection = (key: keyof typeof expandedSections) => {
             </div>
           </div>
         </section>
-
-        <section class="card">
-          <div class="card-head">
-            <i class="ri-flashlight-line c-yellow"></i>
-            <span>PDN Grid</span>
-          </div>
-          <div class="card-body">
-            <div class="field-row">
-              <div class="field">
-                <label>Layer</label>
-                <Select v-model="config.pdn.grid.layer" :options="layerOptions" optionLabel="label" optionValue="value"
-                  size="small" />
-              </div>
-              <div class="field">
-                <label>Width (μm)</label>
-                <InputNumber v-model="config.pdn.grid.width" size="small" :minFractionDigits="2" />
-              </div>
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label>Power Net</label>
-                <InputText v-model="config.pdn.grid.powerNet" size="small" />
-              </div>
-              <div class="field">
-                <label>Ground Net</label>
-                <InputText v-model="config.pdn.grid.groundNet" size="small" />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="card-head clickable" @click="toggleSection('connectLayers')">
-            <i class="ri-stack-line c-yellow"></i>
-            <span>Layer Connections</span>
-            <span class="count">{{ config.pdn.connectLayers.length }}</span>
-            <i :class="expandedSections.connectLayers ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'"
-              class="toggle"></i>
-          </div>
-          <div v-show="expandedSections.connectLayers" class="card-body compact">
-            <div class="connect-list">
-              <div v-for="(c, i) in config.pdn.connectLayers" :key="i" class="connect-row">
-                <Select v-model="c.layers[0]" :options="layerOptions" optionLabel="label" optionValue="value"
-                  size="small" />
-                <i class="ri-arrow-left-right-line"></i>
-                <Select v-model="c.layers[1]" :options="layerOptions" optionLabel="label" optionValue="value"
-                  size="small" />
-                <button class="btn-icon danger" @click="removeConnectLayer(i)">
-                  <i class="ri-delete-bin-line"></i>
-                </button>
-              </div>
-            </div>
-            <button class="btn-add" @click="addConnectLayer"><i class="ri-add-line"></i> Add</button>
-          </div>
-        </section>
-
-        <!-- 第三行：PDN IO 和 Global Connect -->
-        <section class="card">
-          <div class="card-head clickable" @click="toggleSection('pdnIo')">
-            <i class="ri-plug-line c-yellow"></i>
-            <span>PDN IO</span>
-            <span class="count">{{ config.pdn.io.length }}</span>
-            <i :class="expandedSections.pdnIo ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'" class="toggle"></i>
-          </div>
-          <div v-show="expandedSections.pdnIo" class="card-body compact">
-            <table class="mini-table">
-              <thead>
-                <tr>
-                  <th>Net</th>
-                  <th>Direction</th>
-                  <th>Power</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(io, i) in config.pdn.io" :key="i">
-                  <td>
-                    <InputText v-model="io.netName" size="small" />
-                  </td>
-                  <td><Select v-model="io.direction" :options="directionOptions" optionLabel="label" optionValue="value"
-                      size="small" /></td>
-                  <td class="center">
-                    <Checkbox v-model="io.isPower" :binary="true" />
-                  </td>
-                  <td><button class="btn-icon danger" @click="removePdnIO(i)"><i
-                        class="ri-delete-bin-line"></i></button></td>
-                </tr>
-              </tbody>
-            </table>
-            <button class="btn-add" @click="addPdnIO"><i class="ri-add-line"></i> Add</button>
-          </div>
-        </section>
-
-        <section class="card span-2">
-          <div class="card-head clickable" @click="toggleSection('globalConnect')">
-            <i class="ri-links-line c-yellow"></i>
-            <span>Global Connect</span>
-            <span class="count">{{ config.pdn.globalConnect.length }}</span>
-            <i :class="expandedSections.globalConnect ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'"
-              class="toggle"></i>
-          </div>
-          <div v-show="expandedSections.globalConnect" class="card-body compact">
-            <table class="mini-table">
-              <thead>
-                <tr>
-                  <th>Net</th>
-                  <th>Instance Pin</th>
-                  <th>Power</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(gc, i) in config.pdn.globalConnect" :key="i">
-                  <td>
-                    <InputText v-model="gc.netName" size="small" />
-                  </td>
-                  <td>
-                    <InputText v-model="gc.instancePinName" size="small" />
-                  </td>
-                  <td class="center">
-                    <Checkbox v-model="gc.isPower" :binary="true" />
-                  </td>
-                  <td><button class="btn-icon danger" @click="removeGlobalConnect(i)"><i
-                        class="ri-delete-bin-line"></i></button></td>
-                </tr>
-              </tbody>
-            </table>
-            <button class="btn-add" @click="addGlobalConnect"><i class="ri-add-line"></i> Add</button>
-          </div>
-        </section>
-
-        <!-- 最后：Tracks 和 PDN Stripe（全宽） -->
-        <section class="card full-width">
-          <div class="card-head clickable" @click="toggleSection('tracks')">
-            <i class="ri-grid-line c-cyan"></i>
-            <span>Tracks</span>
-            <span class="count">{{ config.floorplan.tracks.length }}</span>
-            <i :class="expandedSections.tracks ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'" class="toggle"></i>
-          </div>
-          <div v-show="expandedSections.tracks" class="card-body compact">
-            <table class="mini-table table-fixed">
-              <thead>
-                <tr>
-                  <th>Layer</th>
-                  <th>X Start</th>
-                  <th>X Step</th>
-                  <th>Y Start</th>
-                  <th>Y Step</th>
-                  <th class="col-action"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(t, i) in config.floorplan.tracks" :key="i">
-                  <td><Select v-model="t.layer" :options="layerOptions" optionLabel="label" optionValue="value"
-                      size="small" /></td>
-                  <td>
-                    <InputNumber v-model="t.xStart" size="small" />
-                  </td>
-                  <td>
-                    <InputNumber v-model="t.xStep" size="small" />
-                  </td>
-                  <td>
-                    <InputNumber v-model="t.yStart" size="small" />
-                  </td>
-                  <td>
-                    <InputNumber v-model="t.yStep" size="small" />
-                  </td>
-                  <td class="col-action"><button class="btn-icon danger" @click="removeTrack(i)"><i
-                        class="ri-delete-bin-line"></i></button></td>
-                </tr>
-              </tbody>
-            </table>
-            <button class="btn-add" @click="addTrack"><i class="ri-add-line"></i> Add</button>
-          </div>
-        </section>
-
-        <section class="card full-width">
-          <div class="card-head clickable" @click="toggleSection('stripe')">
-            <i class="ri-layout-column-line c-yellow"></i>
-            <span>PDN Stripe</span>
-            <span class="count">{{ config.pdn.stripe.length }}</span>
-            <i :class="expandedSections.stripe ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'" class="toggle"></i>
-          </div>
-          <div v-show="expandedSections.stripe" class="card-body compact">
-            <table class="mini-table table-fixed">
-              <thead>
-                <tr>
-                  <th>Layer</th>
-                  <th>Power Net</th>
-                  <th>Ground Net</th>
-                  <th>Width</th>
-                  <th>Pitch</th>
-                  <th>Offset</th>
-                  <th class="col-action"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(s, i) in config.pdn.stripe" :key="i">
-                  <td><Select v-model="s.layer" :options="layerOptions" optionLabel="label" optionValue="value"
-                      size="small" /></td>
-                  <td>
-                    <InputText v-model="s.powerNet" size="small" />
-                  </td>
-                  <td>
-                    <InputText v-model="s.groundNet" size="small" />
-                  </td>
-                  <td>
-                    <InputNumber v-model="s.width" size="small" :minFractionDigits="1" />
-                  </td>
-                  <td>
-                    <InputNumber v-model="s.pitch" size="small" />
-                  </td>
-                  <td>
-                    <InputNumber v-model="s.offset" size="small" :minFractionDigits="1" />
-                  </td>
-                  <td class="col-action"><button class="btn-icon danger" @click="removeStripe(i)"><i
-                        class="ri-delete-bin-line"></i></button></td>
-                </tr>
-              </tbody>
-            </table>
-            <button class="btn-add" @click="addStripe"><i class="ri-add-line"></i> Add</button>
-          </div>
-        </section>
       </div>
     </main>
   </div>
@@ -555,7 +267,6 @@ const toggleSection = (key: keyof typeof expandedSections) => {
   color: var(--text-primary);
 }
 
-/* 顶栏 */
 .topbar {
   display: flex;
   align-items: center;
@@ -679,7 +390,6 @@ const toggleSection = (key: keyof typeof expandedSections) => {
   cursor: not-allowed;
 }
 
-/* Grid 布局容器 */
 .content-container {
   flex: 1;
   overflow-y: auto;
@@ -694,20 +404,11 @@ const toggleSection = (key: keyof typeof expandedSections) => {
   margin: 0 auto;
 }
 
-/* 卡片 */
 .card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
-}
-
-.card.span-2 {
-  grid-column: span 2;
-}
-
-.card.full-width {
-  grid-column: 1 / -1;
 }
 
 .card-head {
@@ -720,42 +421,14 @@ const toggleSection = (key: keyof typeof expandedSections) => {
   font-weight: 600;
 }
 
-.card-head.clickable {
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.card-head.clickable:hover {
-  background: var(--bg-primary);
-}
-
 .card-head i:first-child {
   font-size: 14px;
-}
-
-.card-head .count {
-  margin-left: auto;
-  padding: 2px 6px;
-  background: var(--bg-primary);
-  border-radius: 4px;
-  font-size: 10px;
-  color: var(--text-secondary);
-}
-
-.card-head .toggle {
-  color: var(--text-secondary);
-  font-size: 16px;
 }
 
 .card-body {
   padding: 12px;
 }
 
-.card-body.compact {
-  padding: 8px;
-}
-
-/* 颜色类 */
 .c-indigo {
   color: #6366f1;
 }
@@ -776,11 +449,6 @@ const toggleSection = (key: keyof typeof expandedSections) => {
   color: #06b6d4;
 }
 
-.c-yellow {
-  color: #eab308;
-}
-
-/* 表单 */
 .field {
   margin-bottom: 10px;
 }
@@ -820,7 +488,6 @@ const toggleSection = (key: keyof typeof expandedSections) => {
   min-width: 0;
 }
 
-/* Tag */
 .tag {
   font-size: 10px;
   font-weight: 600;
@@ -844,7 +511,6 @@ const toggleSection = (key: keyof typeof expandedSections) => {
   color: #f59e0b;
 }
 
-/* Range Slider */
 input[type="range"] {
   width: 100%;
   height: 4px;
@@ -873,7 +539,6 @@ input[type="range"].orange::-webkit-slider-thumb {
   background: #f59e0b;
 }
 
-/* Layer List */
 .layer-list {
   display: flex;
   gap: 6px;
@@ -897,123 +562,6 @@ input[type="range"].orange::-webkit-slider-thumb {
   color: #06b6d4;
 }
 
-/* Mini Table */
-.mini-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-}
-
-.mini-table.table-fixed {
-  table-layout: fixed;
-}
-
-.mini-table.table-fixed th,
-.mini-table.table-fixed td {
-  width: 16%;
-}
-
-.mini-table.table-fixed th.col-action,
-.mini-table.table-fixed td.col-action {
-  width: 4%;
-  text-align: center;
-}
-
-.mini-table th {
-  text-align: left;
-  padding: 6px 4px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.mini-table td {
-  padding: 4px;
-  vertical-align: middle;
-}
-
-.mini-table td.center {
-  text-align: center;
-}
-
-.mini-table :deep(.p-inputtext),
-.mini-table :deep(.p-inputnumber),
-.mini-table :deep(.p-select) {
-  width: 100%;
-}
-
-/* Buttons */
-.btn-icon {
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-
-.btn-icon.danger:hover {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-}
-
-.btn-add {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: 100%;
-  padding: 6px;
-  margin-top: 8px;
-  border: 1px dashed var(--border-color);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 11px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.btn-add:hover {
-  border-color: #6366f1;
-  color: #6366f1;
-  background: rgba(99, 102, 241, 0.05);
-}
-
-/* Connect List */
-.connect-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.connect-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--bg-primary);
-  border-radius: 4px;
-}
-
-.connect-row :deep(.p-select) {
-  flex: 1;
-}
-
-.connect-row>i {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-/* Input overrides */
 :deep(.p-inputtext),
 :deep(.p-inputnumber-input),
 :deep(.p-select) {
@@ -1034,14 +582,9 @@ input[type="range"].orange::-webkit-slider-thumb {
   box-shadow: none;
 }
 
-/* Responsive */
 @media (max-width: 1400px) {
   .content-grid {
     grid-template-columns: repeat(3, 1fr);
-  }
-
-  .card.span-2 {
-    grid-column: span 2;
   }
 }
 
@@ -1049,20 +592,11 @@ input[type="range"].orange::-webkit-slider-thumb {
   .content-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-
-  .card.span-2 {
-    grid-column: span 2;
-  }
 }
 
 @media (max-width: 768px) {
   .content-grid {
     grid-template-columns: 1fr;
-  }
-
-  .card.span-2,
-  .card.full-width {
-    grid-column: span 1;
   }
 
   .topbar {

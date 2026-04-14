@@ -1,0 +1,260 @@
+@import './stepConfigLayouts.css';
+
+/* Step config editor (aligned with ConfigureView); scoped to .step-config-root */
+.step-config-root {
+  --sc-indigo: #6366f1;
+  --sc-purple: #8b5cf6;
+  --sc-green: #10b981;
+  --sc-orange: #f59e0b;
+  --sc-cyan: #06b6d4;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.step-config-root .topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.step-config-root .sc-editor-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.step-config-root .topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.step-config-root .topbar-left > i:first-child {
+  font-size: 16px;
+  color: var(--sc-indigo);
+  flex-shrink: 0;
+}
+
+.step-config-root .topbar-left .title {
+  font-weight: 600;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-config-root .topbar-left .divider {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.step-config-root .topbar-left .subtitle {
+  color: var(--text-secondary);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.step-config-root .topbar-left .unsaved-indicator {
+  color: #f59e0b;
+  font-weight: 600;
+  margin-left: -2px;
+}
+
+.step-config-root .topbar-right {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.step-config-root .btn-text {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.step-config-root .btn-text:hover:not(:disabled) {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.step-config-root .btn-text:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.step-config-root .btn-primary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: none;
+  background: #6366f1;
+  color: white;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.step-config-root .btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.step-config-root .btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Flex child scroll: height 0 + flex-grow claims remaining height; avoids min-content growing past scroll */
+.step-config-root .sc-scroll {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  height: 0;
+  overflow-y: auto;
+  /* Wide Floorplan tables: allow horizontal scroll inside the panel */
+  overflow-x: auto;
+  padding: 12px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+
+.step-config-root .sc-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 100%;
+}
+
+.step-config-root .card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.step-config-root .card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.step-config-root .card-head i:first-child {
+  font-size: 14px;
+}
+
+.step-config-root .card-body {
+  padding: 10px;
+}
+
+.step-config-root .field {
+  margin-bottom: 10px;
+}
+
+.step-config-root .field:last-child {
+  margin-bottom: 0;
+}
+
+.step-config-root .field label {
+  display: block;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.step-config-root .field-row {
+  display: flex;
+  gap: 10px;
+}
+
+.step-config-root .field-row .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-config-root .c-indigo {
+  color: var(--sc-indigo);
+}
+.step-config-root .c-purple {
+  color: var(--sc-purple);
+}
+.step-config-root .c-green {
+  color: var(--sc-green);
+}
+.step-config-root .c-orange {
+  color: var(--sc-orange);
+}
+.step-config-root .c-cyan {
+  color: var(--sc-cyan);
+}
+
+.step-config-root .spin {
+  animation: sc-spin 1s linear infinite;
+}
+
+@keyframes sc-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.step-config-root :deep(.p-inputtext),
+.step-config-root :deep(.p-inputnumber-input),
+.step-config-root :deep(.p-textarea) {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+  font-size: 12px;
+}
+
+.step-config-root .field :deep(.p-inputtext),
+.step-config-root .field :deep(.p-inputnumber),
+.step-config-root .field :deep(.p-textarea) {
+  width: 100%;
+}
+
+.step-config-root :deep(.p-inputtext:focus),
+.step-config-root :deep(.p-inputnumber-input:focus),
+.step-config-root :deep(.p-textarea:focus) {
+  border-color: #6366f1;
+  box-shadow: none;
+}
+
+.step-config-root details.raw-json > summary {
+  list-style: none;
+}
+
+.step-config-root details.raw-json > summary::-webkit-details-marker {
+  display: none;
+}

@@ -1,0 +1,447 @@
+/* Step config panel: dense data, clear sections, theme variables (data-dense, focus, no layout shift) */
+.step-config-root .sc-pro {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* Wide tables/grids must not inflate min-content or the splitter column and scroll height break */
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Hero metrics strip */
+.step-config-root .sc-pro-hero {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--sc-accent, #6366f1) 12%, var(--bg-secondary)) 0%,
+    var(--bg-secondary) 100%
+  );
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.step-config-root .sc-pro-hero__accent {
+  width: 4px;
+  border-radius: 4px;
+  background: var(--sc-accent, #6366f1);
+  flex-shrink: 0;
+}
+
+.step-config-root .sc-pro-hero__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-config-root .sc-pro-hero__label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.step-config-root .sc-pro-hero__value {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.step-config-root .sc-pro-hero__hint {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* Section: left stripe + title */
+.step-config-root .sc-pro-section {
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  overflow: hidden;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.step-config-root .sc-pro-section:hover {
+  border-color: color-mix(in srgb, var(--sc-accent, #6366f1) 35%, var(--border-color));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sc-accent, #6366f1) 12%, transparent);
+}
+
+.step-config-root .sc-pro-section__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-primary) 55%, var(--bg-secondary));
+}
+
+.step-config-root .sc-pro-section__stripe {
+  width: 3px;
+  border-radius: 3px;
+  background: var(--sc-accent, #6366f1);
+  margin-top: 3px;
+  flex-shrink: 0;
+  align-self: stretch;
+  min-height: 28px;
+}
+
+.step-config-root .sc-pro-section__titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-config-root .sc-pro-section__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.step-config-root .sc-pro-section__desc {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.step-config-root .sc-pro-section__body {
+  padding: 12px;
+}
+
+/* KV grid: two columns */
+.step-config-root .sc-pro-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+@media (max-width: 520px) {
+  .step-config-root .sc-pro-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.step-config-root .sc-pro-grid--1 {
+  grid-template-columns: 1fr;
+}
+
+/* One field spans both columns (e.g. last row in a 2-col form with odd field count) */
+.step-config-root .sc-pro-grid .sc-pro-grid__full {
+  grid-column: 1 / -1;
+}
+
+/* Data tables */
+.step-config-root .sc-pro-table-wrap {
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  overflow: auto;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--bg-primary);
+}
+
+.step-config-root .sc-pro-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+/*
+ * Floorplan (and similar): avoid equal column splits from plain fixed layout.
+ * Keep width: 100% only — no max-content — so the right Splitter column does not shrink.
+ */
+
+/*
+ * Tracks: five equal data columns + action (same idea as Stripe).
+ */
+.step-config-root .sc-pro-table--tracks col.sc-pro-tracks__col-data {
+  width: calc((100% - 2.75rem) / 5);
+  min-width: 0;
+}
+
+.step-config-root .sc-pro-table--tracks col.sc-pro-tracks__col-action {
+  width: 2.75rem;
+}
+
+/* Stripe: six equal data columns; last column is row actions (see thead th:last-child width) */
+.step-config-root .sc-pro-table--stripe col.sc-pro-stripe__col-data {
+  width: calc((100% - 2.75rem) / 6);
+  min-width: 0;
+}
+
+.step-config-root .sc-pro-table--stripe col.sc-pro-stripe__col-action {
+  width: 2.75rem;
+}
+
+/* PDN IO & Global connect: 3 cols + action */
+.step-config-root .sc-pro-table--fp4 col:nth-child(1) {
+  width: 34%;
+}
+
+.step-config-root .sc-pro-table--fp4 col:nth-child(2) {
+  width: 30%;
+}
+
+.step-config-root .sc-pro-table--fp4 col:nth-child(3) {
+  width: 22%;
+}
+
+.step-config-root .sc-pro-table--fp4 col:nth-child(4) {
+  width: 2.75rem;
+}
+
+.step-config-root .sc-pro-table thead th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 85%, var(--bg-primary));
+  border-bottom: 1px solid var(--border-color);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Delete / row action: fixed narrow column so inputs are not crushed against the icon */
+.step-config-root .sc-pro-table thead th:last-child:not(:first-child),
+.step-config-root .sc-pro-table tbody td:last-child:not(:first-child) {
+  width: 2.75rem;
+  max-width: 3rem;
+  padding-left: 8px;
+  padding-right: 8px;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.step-config-root .sc-pro-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.step-config-root .sc-pro-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.step-config-root .sc-pro-table tbody tr:hover {
+  background: color-mix(in srgb, var(--sc-accent, #6366f1) 6%, var(--bg-primary));
+}
+
+.step-config-root .sc-pro-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.step-config-root .sc-pro-table .sc-mono {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 11px;
+}
+
+/* Prime inputs: allow shrink in cells but keep number fields readable when table is wide enough */
+.step-config-root .sc-pro-table :deep(.p-inputtext),
+.step-config-root .sc-pro-table :deep(.p-inputnumber),
+.step-config-root .sc-pro-table :deep(.p-inputnumber-input) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.step-config-root .sc-pro-table :deep(.p-inputnumber-input) {
+  min-width: 2.75rem;
+}
+
+.step-config-root .sc-pro-table :deep(.p-inputtext.sc-mono) {
+  min-width: 3rem;
+}
+
+/* Dense Floorplan tables: global input min-widths stack and exceed panel width — allow shrink */
+.step-config-root .sc-pro-table--tracks :deep(.p-inputtext),
+.step-config-root .sc-pro-table--stripe :deep(.p-inputtext) {
+  min-width: 0 !important;
+}
+
+/*
+ * Tracks / Stripe：单元格内全是 InputText 时不要用 max-width:0 + overflow:hidden，
+ * 否则会裁掉输入框右侧描边；列宽由 <colgroup> 约束。
+ */
+.step-config-root .sc-pro-table--tracks thead th,
+.step-config-root .sc-pro-table--tracks tbody td,
+.step-config-root .sc-pro-table--stripe thead th,
+.step-config-root .sc-pro-table--stripe tbody td {
+  min-width: 0;
+  overflow: visible;
+}
+
+.step-config-root .sc-pro-table--tracks tbody td :deep(input.p-inputtext:only-child),
+.step-config-root .sc-pro-table--stripe tbody td :deep(input.p-inputtext:only-child) {
+  width: 100% !important;
+  max-width: 100%;
+  min-width: 0 !important;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+/* Match fp4 in narrow panels: same min-width relief as Tracks / Stripe */
+.step-config-root .sc-pro-table--fp4 :deep(.p-inputtext),
+.step-config-root .sc-pro-table--fp4 :deep(.p-inputnumber-input) {
+  min-width: 0 !important;
+}
+
+/* RT engine flags: terminal-style rows */
+.step-config-root .sc-pro-flag {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.step-config-root .sc-pro-flag:hover {
+  border-color: color-mix(in srgb, var(--sc-accent, #06b6d4) 40%, var(--border-color));
+  background: color-mix(in srgb, var(--sc-accent, #06b6d4) 5%, var(--bg-primary));
+}
+
+.step-config-root .sc-pro-flag__key {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--sc-accent, #06b6d4);
+  word-break: break-all;
+}
+
+.step-config-root .sc-pro-flag__val :deep(.p-inputtext) {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 11px;
+}
+
+/* Label chips (CTS toggles) */
+.step-config-root .sc-pro-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'Fira Code', ui-monospace, monospace;
+}
+
+.step-config-root .sc-pro-pill--muted {
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  color: var(--text-secondary);
+}
+
+/* Nested sub-panels (PL) */
+.step-config-root .sc-pro-subpanel {
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--border-color) 90%, var(--sc-accent, #f59e0b));
+  background: color-mix(in srgb, var(--bg-primary) 92%, var(--bg-secondary));
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.step-config-root .sc-pro-subpanel:last-child {
+  margin-bottom: 0;
+}
+
+.step-config-root .sc-pro-subpanel__title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+/* Inline action buttons */
+.step-config-root .sc-pro-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.step-config-root .sc-pro-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.step-config-root .sc-pro-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sc-accent, #6366f1) 10%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--sc-accent, #6366f1) 45%, var(--border-color));
+  color: var(--text-primary);
+}
+
+.step-config-root .sc-pro-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.step-config-root .sc-pro-btn--danger:hover:not(:disabled) {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+  color: #f87171;
+}
+
+/* DRC path fields */
+.step-config-root .sc-pro-path-field :deep(.p-inputtext),
+.step-config-root .sc-pro-path-field :deep(.p-textarea) {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 11px;
+}
+
+/* Accent color per section (views set --sc-accent) */
+.step-config-root .sc-pro[data-accent='indigo'] {
+  --sc-accent: #6366f1;
+}
+.step-config-root .sc-pro[data-accent='violet'] {
+  --sc-accent: #8b5cf6;
+}
+.step-config-root .sc-pro[data-accent='emerald'] {
+  --sc-accent: #10b981;
+}
+.step-config-root .sc-pro[data-accent='amber'] {
+  --sc-accent: #f59e0b;
+}
+.step-config-root .sc-pro[data-accent='cyan'] {
+  --sc-accent: #06b6d4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-config-root .sc-pro-section,
+  .step-config-root .sc-pro-table tbody tr,
+  .step-config-root .sc-pro-flag,
+  .step-config-root .sc-pro-btn {
+    transition: none;
+  }
+}

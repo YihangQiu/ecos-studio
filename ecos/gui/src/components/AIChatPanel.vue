@@ -66,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated } from 'vue'
 import MessageItem from './MessageItem.vue'
 import { useMessageStore } from '../stores/messageStore'
 
@@ -146,6 +146,15 @@ const scrollToBottom = (smooth = true) => {
     el.scrollTop = el.scrollHeight
   }
 }
+
+/** 从 Inspector 切回 Chat 时：KeepAlive 激活，强制滚到底（避免停在中间位置） */
+onActivated(() => {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      scrollToBottom(false)
+    })
+  })
+})
 
 /**
  * 智能滚动到底部

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef, markRaw, watch, ref, onUnmounted, onMounted, computed } from 'vue'
+import { shallowRef, markRaw, watch, ref, onUnmounted, onMounted, computed, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { EditorContainer, type Editor } from '@/applications/editor'
 import { LayerManagerPlugin } from '@/applications/editor/plugins'
@@ -44,8 +44,22 @@ const editor = shallowRef<Editor | null>(null)
 const layoutJsonRelativePath = ref<string | null>(null)
 /** DRC 结果 JSON 相对路径：get_info 显式字段，或与布局同目录的 `drc.step.json` */
 const drcJsonRelativePath = ref<string | null>(null)
+/** 当前步骤预览图相对路径（与 handleStageChange 中 info.image 一致），供「矢量 / 预览图」切换 */
+const previewImageRelativePath = ref<string | null>(null)
+/** 最近一次成功加载的瓦片包（切换回矢量时复用，步骤切换时在 handleStageChange 中清空） */
+const lastSuccessfulTileBundle = ref<{ baseUrl: string, outDir?: string } | null>(null)
 const tileGenBusy = ref(false)
+/** 矢量 ↔ 预览图切换中（与生成瓦片并列禁用工具栏） */
+const previewModeSwitchBusy = ref(false)
 const showTileGenerate = computed(() => isTauri())
+
+const showPreviewModeToggle = computed(() =>
+  showTileGenerate.value
+  && previewImageRelativePath.value != null
+  && previewImageRelativePath.value.length > 0,
+)
+
+const canSwitchToLayoutMode = computed(() => lastSuccessfulTileBundle.value != null)
 
 /** 当前路由阶段名，用作瓦片缓存子目录 stepKey（与 handleStageChange 一致） */
 const currentStepKey = computed(() => {
@@ -228,6 +242,7 @@ const onEditorReady = (editorInstance: Editor) => {
 }
 
 function cleanupLayout(): void {
+  // 注意：不在这里清空 lastSuccessfulTileBundle，以便从矢量切到预览图后能再切回缓存瓦片包。
   placementTool?.destroy()
   editManager?.destroy()
   tileInteraction?.destroy()
@@ -324,7 +339,9 @@ async function loadTileLayout(baseUrl: string, localRoot?: string): Promise<void
     // 否则 worldToDisplay / 标尺使用的 worldHeight 仍是旧值（如默认 4000），鼠标 EDA 读数会错。
     {
       const d = tileManager.manifest!.dieArea
+      const worldCenter = { x: d.x + d.w / 2, y: d.y + d.h / 2 }
       ed.setWorldBounds(d.w, d.h)
+      ed.fitToWorld(40, { worldCenter })
     }
 
     // ViewportAnimator
@@ -463,11 +480,23 @@ async function loadTileLayout(baseUrl: string, localRoot?: string): Promise<void
     layoutState.renderMode.value = 'layout'
     layoutState.loadingState.value = 'ready'
     layoutState.loadingMessage.value = ''
+
+    {
+      const d = tileManager.manifest!.dieArea
+      const worldCenter = { x: d.x + d.w / 2, y: d.y + d.h / 2 }
+      void nextTick(() => {
+        editor.value?.fitToWorld(40, { worldCenter })
+        requestAnimationFrame(() => editor.value?.fitToWorld(40, { worldCenter }))
+      })
+    }
+
+    lastSuccessfulTileBundle.value = { baseUrl, outDir: localRoot }
   } catch (err) {
     console.error('Failed to load tile layout:', err)
     layoutState.loadingState.value = 'error'
     layoutState.loadingMessage.value = String(err)
     cleanupLayout()
+    lastSuccessfulTileBundle.value = null
   }
 }
 
@@ -487,6 +516,10 @@ const handleStageChange = async (stage: string) => {
   if (!stepEnum) {
     editor.value.clearBackground()
     cleanupLayout()
+    layoutJsonRelativePath.value = null
+    drcJsonRelativePath.value = null
+    previewImageRelativePath.value = null
+    lastSuccessfulTileBundle.value = null
     return
   }
 
@@ -504,13 +537,21 @@ const handleStageChange = async (stage: string) => {
         ?? deriveDrcStepPathFromLayoutJsonRelative(layoutJsonRelativePath.value ?? '')
         ?? null
 
+      const imagePath = typeof info.image === 'string' && info.image.length > 0 ? info.image : null
+      previewImageRelativePath.value = imagePath
+
+      lastSuccessfulTileBundle.value = null
+
       // Fallback to image mode
-      const imagePath = info.image
       if (imagePath) {
         cleanupLayout()
         const imageUrl = await getResourceUrl(imagePath, currentProject.value?.path || '')
         await editor.value?.setBackgroundImage(imageUrl)
         layoutState.renderMode.value = 'image'
+        void nextTick(() => {
+          editor.value?.fitToWorld(10)
+          requestAnimationFrame(() => editor.value?.fitToWorld(10))
+        })
         return
       }
     }
@@ -519,12 +560,16 @@ const handleStageChange = async (stage: string) => {
     cleanupLayout()
     layoutJsonRelativePath.value = null
     drcJsonRelativePath.value = null
+    previewImageRelativePath.value = null
+    lastSuccessfulTileBundle.value = null
   } catch (error) {
     console.error('Failed to load stage results:', error)
     editor.value?.clearBackground()
     cleanupLayout()
     layoutJsonRelativePath.value = null
     drcJsonRelativePath.value = null
+    previewImageRelativePath.value = null
+    lastSuccessfulTileBundle.value = null
   }
 }
 
@@ -558,8 +603,47 @@ async function onGenerateTilesFromToolbar(): Promise<void> {
     layoutState.loadingState.value = 'error'
     layoutState.loadingMessage.value = String(err)
     cleanupLayout()
+    lastSuccessfulTileBundle.value = null
   } finally {
     tileGenBusy.value = false
+  }
+}
+
+async function onPreviewModeChange(mode: 'layout' | 'image'): Promise<void> {
+  if (previewModeSwitchBusy.value || tileGenBusy.value) return
+  if (mode === layoutState.renderMode.value) return
+  if (mode === 'layout' && !lastSuccessfulTileBundle.value) return
+  const rel = previewImageRelativePath.value
+  if (mode === 'image' && (!rel || !editor.value)) return
+
+  previewModeSwitchBusy.value = true
+  layoutState.loadingState.value = 'loading'
+  layoutState.loadingMessage.value = mode === 'image' ? '加载预览图…' : '加载矢量版图…'
+  try {
+    if (mode === 'image') {
+      tilePrefetchStore.clearDeferredPrefetchQueue()
+      cleanupLayout()
+      const imageUrl = await getResourceUrl(rel!, currentProject.value?.path || '')
+      await editor.value!.setBackgroundImage(imageUrl)
+      layoutState.renderMode.value = 'image'
+      layoutState.loadingState.value = 'ready'
+      layoutState.loadingMessage.value = ''
+      void nextTick(() => {
+        editor.value?.fitToWorld(10)
+        requestAnimationFrame(() => editor.value?.fitToWorld(10))
+      })
+      return
+    }
+
+    const bundle = lastSuccessfulTileBundle.value
+    if (!bundle) return
+    await loadTileLayout(bundle.baseUrl, bundle.outDir)
+  } catch (err) {
+    console.error('Preview mode switch failed:', err)
+    layoutState.loadingState.value = 'error'
+    layoutState.loadingMessage.value = String(err)
+  } finally {
+    previewModeSwitchBusy.value = false
   }
 }
 
@@ -657,8 +741,13 @@ onUnmounted(() => {
       :show-tile-generate="showTileGenerate"
       :tile-gen-busy="tileGenBusy"
       :layout-tile-shortcuts-hint="layoutState.renderMode.value === 'layout' && layoutState.tileSelection.value != null"
+      :show-preview-mode-toggle="showPreviewModeToggle"
+      :render-mode="layoutState.renderMode.value"
+      :can-switch-to-layout-mode="canSwitchToLayoutMode"
+      :preview-mode-switch-busy="previewModeSwitchBusy"
       @toolChange="onToolChange"
       @generateTiles="onGenerateTilesFromToolbar"
+      @previewModeChange="onPreviewModeChange"
     />
 
     <div class="relative flex-1 overflow-hidden">

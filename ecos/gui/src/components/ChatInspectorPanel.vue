@@ -10,14 +10,16 @@
       </button>
     </div>
 
-    <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
-      <div v-if="activeTab === 'chat'" class="h-full min-h-0">
-        <AIChatPanel />
-      </div>
+    <div class="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
+      <!-- KeepAlive：避免 v-if 销毁聊天导致 blob 图重新加载/裂图；状态与滚动由子组件 onActivated 恢复 -->
+      <KeepAlive>
+        <AIChatPanel v-if="activeTab === 'chat'" class="flex-1 min-h-0 h-full min-w-0 w-full max-w-full overflow-hidden" />
+      </KeepAlive>
 
-      <div v-else class="flex flex-col h-full min-h-0">
-        <StepConfigPanel class="h-full min-h-0 flex-1 min-w-0 overflow-hidden" />
-      </div>
+      <StepConfigPanel
+        v-if="activeTab === 'inspector'"
+        class="flex-1 min-h-0 flex flex-col h-full min-w-0 overflow-hidden"
+      />
     </div>
   </div>
 </template>

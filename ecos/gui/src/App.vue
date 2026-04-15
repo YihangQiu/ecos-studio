@@ -264,11 +264,11 @@ onUnmounted(() => {
   z-index: 9999;
 }
 
-/* 上边缘 */
+/* 上边缘（左右留出顶栏按钮/菜单区域，避免与自定义标题栏重叠导致点击被当成 resize） */
 .resize-top {
   top: 0;
-  left: 20px;
-  right: 20px;
+  left: 220px;
+  right: 220px;
   height: 6px;
   cursor: ns-resize;
 }
@@ -291,27 +291,27 @@ onUnmounted(() => {
   cursor: ew-resize;
 }
 
-/* 右边缘 */
+/* 右边缘：从顶栏下方开始，避免盖住右侧最小化/最大化/关闭 */
 .resize-right {
   right: 0;
-  top: 20px;
+  top: 40px;
   bottom: 20px;
   width: 6px;
   cursor: ew-resize;
 }
 
-/* 左上角 */
+/* 左上角：下移避免压住顶栏左侧菜单/图标点击 */
 .resize-top-left {
-  top: 0;
+  top: 40px;
   left: 0;
   width: 20px;
   height: 20px;
   cursor: nwse-resize;
 }
 
-/* 右上角 */
+/* 右上角：下移避免压住顶栏右侧窗口控制按钮 */
 .resize-top-right {
-  top: 0;
+  top: 40px;
   right: 0;
   width: 20px;
   height: 20px;

@@ -47,10 +47,20 @@
           <rect x="2" y="5.5" width="8" height="1" fill="currentColor" />
         </svg>
       </button>
-      <!-- 最大化/还原 -->
-      <button @click="handleMaximize" class="window-btn" title="Maximize">
-        <svg width="16" height="16" viewBox="0 0 16 16">
-          <rect x="2" y="2" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1" />
+      <!-- 最大化 / 还原 -->
+      <button
+        @click="handleMaximize"
+        class="window-btn"
+        :title="isMaximized ? 'Restore' : 'Maximize'"
+      >
+        <!-- 最大化：单框 -->
+        <svg v-if="!isMaximized" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="2.5" y="2.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1" />
+        </svg>
+        <!-- 还原：重叠双框 -->
+        <svg v-else width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="4.5" y="4.5" width="7.5" height="7.5" fill="none" stroke="currentColor" stroke-width="1" />
+          <rect x="2.5" y="2.5" width="7.5" height="7.5" fill="none" stroke="currentColor" stroke-width="1" />
         </svg>
       </button>
       <!-- 关闭 -->
@@ -161,14 +171,37 @@ const handleKeydown = (e: KeyboardEvent) => {
   }
 }
 
+const isMaximized = ref(false)
+let unlistenResized: (() => void) | undefined
+
+async function syncMaximizedState() {
+  try {
+    isMaximized.value = await getCurrentWindow().isMaximized()
+  } catch {
+    /* ignore */
+  }
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('keydown', handleKeydown)
+  void syncMaximizedState()
+  getCurrentWindow()
+    .onResized(() => {
+      void syncMaximizedState()
+    })
+    .then((unlisten) => {
+      unlistenResized = unlisten
+    })
+    .catch(() => {
+      /* ignore */
+    })
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('keydown', handleKeydown)
+  unlistenResized?.()
 })
 
 // ---- 窗口控制 ----
@@ -178,6 +211,10 @@ const handleMinimize = () => {
 
 const handleMaximize = () => {
   invoke('window_maximize')
+  // 部分环境下 onResized 略晚，下一帧再同步一次
+  requestAnimationFrame(() => {
+    void syncMaximizedState()
+  })
 }
 
 const { closeProject } = useWorkspace()

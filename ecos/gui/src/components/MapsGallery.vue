@@ -65,6 +65,7 @@ import { ref, watch, onUnmounted } from 'vue'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { useTauri } from '../composables/useTauri'
 import { useWorkspace } from '../composables/useWorkspace'
+import { useMessageStore } from '../stores/messageStore'
 
 // Props
 interface MapInfo {
@@ -85,6 +86,21 @@ const emit = defineEmits<{
 
 const { isInTauri } = useTauri()
 const { currentProject } = useWorkspace()
+const messageStore = useMessageStore()
+
+/** 聊天里仍引用着的 blob:，卸载 Maps 时不可 revoke，否则切回 Chat 会裂图 */
+function blobUrlsStillUsedInChat(): Set<string> {
+  const keep = new Set<string>()
+  for (const m of messageStore.messages) {
+    if (m.type === 'map' && m.mapData?.imageUrl?.startsWith('blob:')) {
+      keep.add(m.mapData.imageUrl)
+    }
+    if (m.type === 'image' && m.image?.url?.startsWith('blob:')) {
+      keep.add(m.image.url)
+    }
+  }
+  return keep
+}
 
 // 状态
 const selectedKey = ref<string | null>(null)
@@ -195,10 +211,11 @@ watch(
   { immediate: true, deep: true }
 )
 
-// 组件销毁时清理 blob URL
+// 组件销毁时清理未被聊天引用的 blob URL
 onUnmounted(() => {
+  const keep = blobUrlsStillUsedInChat()
   Object.values(imageUrls.value).forEach(url => {
-    if (url.startsWith('blob:')) {
+    if (url.startsWith('blob:') && !keep.has(url)) {
       URL.revokeObjectURL(url)
     }
   })

@@ -14,6 +14,11 @@ export interface EditorOptions {
   theme?: ThemeName
 }
 
+/** fitToWorld：在 Pixi 世界坐标中要对准到标尺绘图区中心的目标点（默认可为 die 几何中心） */
+export interface FitToWorldOptions {
+  worldCenter?: { x: number; y: number }
+}
+
 const DEFAULT_OPTIONS: Required<EditorOptions> = {
   worldWidth: 4000,
   worldHeight: 4000,
@@ -43,6 +48,12 @@ export class Editor {
 
   /** 上次 resize 时的屏幕尺寸，用于在窗口尺寸变化时平移视口以保持世界坐标一致 */
   private _screenSizeForResize: { w: number; h: number } | null = null
+
+  /**
+   * 为 true 时表示当前视口由 fitToWorld/标尺内居中得到；容器尺寸变化时应对「留黑边」居中视图用半宽/半高 delta。
+   * 为 false 时保持原全量平移（初始化标尺原点、用户拖拽等）。
+   */
+  private _resizeUsesCenteredUnderflowRule = false
 
   /** 防抖延迟时间 (ms) */
   private static readonly RESIZE_DEBOUNCE_DELAY = 16 // ~60fps
@@ -310,8 +321,9 @@ export class Editor {
     this.viewport.worldWidth = worldWidth
     this.viewport.worldHeight = worldHeight
 
-    const screenW = this.app?.screen.width ?? 800
-    const screenH = this.app?.screen.height ?? 600
+    // 与 fitToWorld、viewport 一致使用同一套 screen 尺寸，避免 app.screen 与 viewport 不一致时 clampZoom 与真实视口错位（大 die + 小缩放时尤甚）
+    const screenW = (this.viewport.screenWidth > 0 ? this.viewport.screenWidth : this.app?.screen.width) ?? 800
+    const screenH = (this.viewport.screenHeight > 0 ? this.viewport.screenHeight : this.app?.screen.height) ?? 600
     const fitScale = Math.min(screenW / worldWidth, screenH / worldHeight)
     const minScale = fitScale * 0.5
     this.viewport.clampZoom({ minScale, maxScale: 100 })
@@ -319,12 +331,32 @@ export class Editor {
     return this
   }
 
+  /** 与 DOM 容器一致，避免 flex/遮罩刚消失时 viewport 尺寸滞后于真实画布 */
+  private syncViewportSizeFromDom(): void {
+    if (!this.viewport || !this.app || !this.container) return
+    const r = this.container.getBoundingClientRect()
+    const w = Math.max(1, Math.round(r.width))
+    const h = Math.max(1, Math.round(r.height))
+    if (w !== this.viewport.screenWidth || h !== this.viewport.screenHeight) {
+      this.app.renderer.resize(w, h)
+      this.viewport.resize(w, h)
+    }
+  }
+
   /** 适应所有元素/世界范围 */
-  public fitToWorld(padding = 40): this {
+  public fitToWorld(padding = 40, options?: FitToWorldOptions): this {
     if (!this.viewport || !this.app) return this
 
-    const sw = this.app.screen.width - padding * 2
-    const sh = this.app.screen.height - padding * 2
+    this.syncViewportSizeFromDom()
+
+    const screenW = this.viewport.screenWidth
+    const screenH = this.viewport.screenHeight
+    const R = RULER_THICKNESS
+    // 可绘矩形：去掉左侧竖尺 + 底部横尺（与 RulerPlugin 一致）
+    const drawableW = Math.max(1, screenW - R)
+    const drawableH = Math.max(1, screenH - R)
+    const sw = Math.max(1, drawableW - padding * 2)
+    const sh = Math.max(1, drawableH - padding * 2)
 
     const scale = Math.min(
       sw / this.options.worldWidth,
@@ -332,14 +364,40 @@ export class Editor {
     )
 
     this.viewport.setZoom(scale, false)
-    this.alignViewportToRulerOrigin()
+    this.alignViewportFittedWorldCentered(options)
 
     this.notifyViewportChange()
     return this
   }
 
   /**
-   * 适应当前背景图：按留白完整显示图片，并与标尺一致使左下角为显示 Y=0（通过 alignViewportToRulerOrigin）
+   * 在左侧/底侧标尺围成的绘图区内，将 `worldCenter` 对准绘图区中心。
+   * 使用 moveCenter 再平移，与 pixi-viewport 内部一致；随后 emit 以便瓦片刷新。
+   */
+  private alignViewportFittedWorldCentered(options?: FitToWorldOptions): this {
+    if (!this.viewport || !this.app) return this
+    const vp = this.viewport
+    const ww = this.options.worldWidth
+    const wh = this.options.worldHeight
+    const cx = options?.worldCenter?.x ?? ww / 2
+    const cy = options?.worldCenter?.y ?? wh / 2
+
+    vp.moveCenter(cx, cy)
+    vp.position.x += RULER_THICKNESS / 2
+    vp.position.y -= RULER_THICKNESS / 2
+
+    vp.emit('moved', { viewport: vp, type: 'animate' })
+    vp.emit('zoomed', { viewport: vp, type: 'animate' })
+    this._resizeUsesCenteredUnderflowRule = true
+    this._screenSizeForResize = {
+      w: vp.screenWidth,
+      h: vp.screenHeight
+    }
+    return this
+  }
+
+  /**
+   * 适应当前背景图：按留白完整显示图片，在标尺绘图区内居中（与 fitToWorld 一致）
    * @param padding 四周留白（像素）
    */
   public fit(padding = 10): this {
@@ -362,16 +420,19 @@ export class Editor {
 
     this.setWorldBounds(imgWidth, imgHeight)
 
-    const screenWidth = this.app.screen.width - padding * 2
-    const screenHeight = this.app.screen.height - padding * 2
+    const R = RULER_THICKNESS
+    const drawableW = Math.max(1, this.viewport.screenWidth - R)
+    const drawableH = Math.max(1, this.viewport.screenHeight - R)
+    const screenWidth = Math.max(1, drawableW - padding * 2)
+    const screenHeight = Math.max(1, drawableH - padding * 2)
 
     const scale = Math.min(
       screenWidth / imgWidth,
       screenHeight / imgHeight
     )
 
-    this.viewport.scale.set(scale)
-    this.alignViewportToRulerOrigin()
+    this.viewport.setZoom(scale, false)
+    this.alignViewportFittedWorldCentered(undefined)
     this.notifyViewportChange()
     return this
   }
@@ -482,8 +543,8 @@ export class Editor {
       // 7. 等待下一帧，确保 sprite 已经完全渲染
       await new Promise(resolve => requestAnimationFrame(resolve))
 
-      // 8. 自动适应图片尺寸，使其居中显示
-      this.fit()
+      // 8. 与工具栏「适应全图」一致：标尺内居中（避免仅用 alignViewportToRulerOrigin 导致靠左）
+      this.fitToWorld(10)
     } catch (error) {
       console.error('Failed to set background image:', error)
       throw error
@@ -567,6 +628,7 @@ export class Editor {
       (sh - RULER_THICKNESS) - wh * scale
     )
     this.viewport.plugins.reset()
+    this._resizeUsesCenteredUnderflowRule = false
     this._screenSizeForResize = {
       w: this.app.screen.width,
       h: this.app.screen.height
@@ -582,8 +644,22 @@ export class Editor {
     this.viewport.resize(width, height)
 
     if (this._screenSizeForResize) {
-      this.viewport.x += width - this._screenSizeForResize.w
-      this.viewport.y += height - this._screenSizeForResize.h
+      const dw = width - this._screenSizeForResize.w
+      const dh = height - this._screenSizeForResize.h
+      const vp = this.viewport
+      if (this._resizeUsesCenteredUnderflowRule) {
+        const swPx = vp.worldWidth * vp.scale.x
+        const shPx = vp.worldHeight * vp.scale.y
+        const ow = this._screenSizeForResize.w
+        const oh = this._screenSizeForResize.h
+        if (swPx < ow) vp.x += dw / 2
+        else vp.x += dw
+        if (shPx < oh) vp.y += dh / 2
+        else vp.y += dh
+      } else {
+        vp.x += dw
+        vp.y += dh
+      }
     } else {
       this.alignViewportToRulerOrigin()
     }

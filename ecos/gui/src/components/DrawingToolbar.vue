@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import type { Editor } from '@/applications/editor'
 import { SelectPlugin } from '@/applications/editor/plugins'
 
@@ -11,18 +11,62 @@ interface Props {
   tileGenBusy?: boolean
   /** 矢量版图模式：在 Select 工具上附加与画布选中区一致的快捷键说明 */
   layoutTileShortcutsHint?: boolean
+  /** 是否显示「矢量瓦片 / 步骤预览图」切换（需步骤含预览图路径） */
+  showPreviewModeToggle?: boolean
+  /** 当前画布表示：矢量版图或预览图 */
+  renderMode?: 'image' | 'layout'
+  /** 是否可切回矢量（已存在可复用的瓦片包） */
+  canSwitchToLayoutMode?: boolean
+  /** 矢量 ↔ 预览图切换中 */
+  previewModeSwitchBusy?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showTileGenerate: false,
   tileGenBusy: false,
   layoutTileShortcutsHint: false,
+  showPreviewModeToggle: false,
+  renderMode: 'image',
+  canSwitchToLayoutMode: false,
+  previewModeSwitchBusy: false,
 })
 
 const emit = defineEmits<{
   toolChange: [toolId: string]
   generateTiles: []
+  previewModeChange: [mode: 'layout' | 'image']
 }>()
+
+const toolbarTileBusy = computed(() => props.tileGenBusy || props.previewModeSwitchBusy)
+
+/**
+ * 有步骤预览图时：只保留一个图标，合并「首次生成瓦片」与「预览图 ↔ 矢量版图」。
+ * - 预览图模式且无缓存：显示版图图标 → 点击生成瓦片
+ * - 预览图模式且已有瓦片：显示版图图标 → 切到矢量
+ * - 矢量模式：显示图片图标 → 切回预览图
+ */
+const unifiedTileIconClass = computed(() =>
+  props.renderMode === 'image' ? 'ri-grid-fill' : 'ri-image-2-fill',
+)
+
+const unifiedTileTitle = computed(() => {
+  if (props.renderMode === 'layout') return '切换到步骤预览图'
+  if (props.canSwitchToLayoutMode) return '切换到矢量瓦片版图'
+  return '从布局生成并加载矢量瓦片'
+})
+
+function onUnifiedTileClick(): void {
+  if (toolbarTileBusy.value) return
+  if (props.renderMode === 'layout') {
+    emit('previewModeChange', 'image')
+    return
+  }
+  if (props.canSwitchToLayoutMode) {
+    emit('previewModeChange', 'layout')
+  } else {
+    emit('generateTiles')
+  }
+}
 
 const activeTool = ref('hand')
 const isRulerEnabled = ref(true)
@@ -41,9 +85,9 @@ function formatZoomPercentLabel(scale: number): string {
 const tools = [
   { id: 'hand', icon: 'ri-hand', tooltip: 'Pan (H)', shortcut: 'h' },
   { id: 'select', icon: 'ri-cursor-fill', tooltip: 'Select (S)', shortcut: 's' },
-  { id: 'measure', icon: 'ri-ruler-2-line', tooltip: 'Measure (M)', shortcut: 'm' },
-  { id: 'highlight', icon: 'ri-focus-3-line', tooltip: 'Highlight', shortcut: '' },
-  { id: 'layers', icon: 'ri-stack-line', tooltip: 'Layers', shortcut: '' },
+  // { id: 'measure', icon: 'ri-ruler-2-line', tooltip: 'Measure (M)', shortcut: 'm' },
+  // { id: 'highlight', icon: 'ri-focus-3-line', tooltip: 'Highlight', shortcut: '' },
+  // { id: 'layers', icon: 'ri-stack-line', tooltip: 'Layers', shortcut: '' },
 ]
 
 function toolTitle(tool: (typeof tools)[number]): string {
@@ -156,13 +200,32 @@ watch(() => props.editor, (editor) => {
 
       <div v-if="showTileGenerate" class="w-px h-6 bg-(--border-color) mx-0.5" />
 
+      <!-- 有预览图：单键合并生成与模式切换；无预览图：仅「生成瓦片」 -->
       <button
-        v-if="showTileGenerate"
+        v-if="showTileGenerate && showPreviewModeToggle"
         type="button"
-        :disabled="tileGenBusy"
+        :disabled="toolbarTileBusy"
+        class="w-9 h-9 flex items-center justify-center rounded transition-all shrink-0 text-base disabled:opacity-50 disabled:cursor-wait disabled:text-(--text-secondary)"
+        :class="toolbarTileBusy
+          ? 'text-(--text-secondary)'
+          : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)'"
+        :title="unifiedTileTitle"
+        :aria-label="unifiedTileTitle"
+        @click="onUnifiedTileClick"
+      >
+        <i
+          class="text-base"
+          :class="[unifiedTileIconClass, { 'animate-pulse': tileGenBusy || previewModeSwitchBusy }]"
+        />
+      </button>
+
+      <button
+        v-else-if="showTileGenerate"
+        type="button"
+        :disabled="toolbarTileBusy"
         @click="emit('generateTiles')"
         :class="[
-          tileGenBusy
+          toolbarTileBusy
             ? 'opacity-50 cursor-wait text-(--text-secondary)'
             : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)',
           'w-9 h-9 flex items-center justify-center rounded transition-all shrink-0',

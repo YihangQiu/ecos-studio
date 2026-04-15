@@ -267,8 +267,8 @@ export class TileManager {
     const fitScale = minScreenDim / maxDim
     this.viewport.clampZoom({ minScale: fitScale * 0.5, maxScale: 50 })
 
+    // 仅缩放以匹配世界尺寸；几何居中由 DrawingArea 在 setWorldBounds 后 Editor.fitToWorld（标尺内居中）完成。
     this.viewport.fit()
-    this.viewport.moveCenter(dieArea.x + dieArea.w / 2, dieArea.y + dieArea.h / 2)
 
     const bg = new Graphics()
     bg.rect(dieArea.x, dieArea.y, dieArea.w, dieArea.h)

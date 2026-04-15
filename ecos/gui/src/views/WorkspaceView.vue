@@ -132,7 +132,10 @@ onUnmounted(() => {
 </template>
 <style scoped>
 .editor-view {
-  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   height: 100%;
 }
 
@@ -143,10 +146,15 @@ onUnmounted(() => {
   contain: layout;
 }
 
-/* No contain on panels — wide min-content (e.g. Floorplan tables) can skew flex; right column shrinks */
+/*
+ * index.css 对 .p-splitter-panel 使用了 contain: layout style paint；
+ * 在部分 WebKit/GTK 下与宽图/替换元素组合时，会误参与祖先的 min-content 宽度。
+ * 在此用更高优先级只保留 style containment，避免横向把整行撑出视口。
+ */
 :deep(.p-splitter-panel) {
   min-width: 0;
   overflow: hidden;
+  contain: style;
 }
 
 :deep(.p-splitter-gutter) {

@@ -53,7 +53,7 @@
 
           <!-- 图片 -->
           <img :src="message.mapData.imageUrl" :alt="message.mapData.title"
-            class="map-image w-full h-auto max-h-[400px] object-contain block" @load="handleMapImageLoad"
+            class="map-image w-full min-w-0 h-auto max-h-[400px] max-w-full object-contain block" @load="handleMapImageLoad"
             @error="handleMapImageError" />
 
           <!-- 颜色条图例 -->
@@ -192,9 +192,10 @@
         <p class="text-xs opacity-90">{{ message.image.label }}:</p>
         <p v-if="message.image.description" class="text-xs opacity-90 whitespace-pre-line mb-2">{{
           message.image.description }}</p>
-        <div class="rounded-lg overflow-hidden mb-2">
-          <img :src="message.image.url" :alt="message.image.label" class="w-full h-auto object-contain max-h-[400px]"
-            loading="lazy" @load="handleImageLoad" />
+        <div class="rounded-lg overflow-hidden mb-2 min-w-0 max-w-full">
+          <img :src="message.image.url" :alt="message.image.label"
+            class="w-full min-w-0 max-w-full h-auto object-contain max-h-[400px]" loading="lazy"
+            @load="handleImageLoad" />
         </div>
       </div>
 
@@ -535,6 +536,8 @@ function csvRows(content: string): string[][] {
 }
 
 .map-image {
+  /* 替换元素在 flex 子树中默认 min-width:auto，会按固有宽度参与 min-content，撑开整列 */
+  min-width: 0;
   max-width: 100%;
   display: block;
 }

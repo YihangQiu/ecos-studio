@@ -3,7 +3,7 @@ import { RulerPlugin, SelectPlugin, HighlightPlugin, MeasurePlugin, LayerManager
 
 // 导出核心类
 export { Editor }
-export type { EditorOptions } from './core/Editor'
+export type { EditorOptions, FitToWorldOptions } from './core/Editor'
 
 // 显示坐标 ↔ 世界坐标（与标尺一致）
 export {

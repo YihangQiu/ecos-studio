@@ -50,7 +50,9 @@ onBeforeRouteLeave(async () => {
   flex-direction: column;
   width: 100%;
   height: 100%;
-  overflow: auto;
+  /* auto 会在子树 min-content 变宽时出现整页横向滚动条；主区域由内部 Splitter/滚动区消化 */
+  overflow-x: hidden;
+  overflow-y: hidden;
   background: var(--bg-primary);
   color: var(--text-primary);
 }
@@ -68,7 +70,10 @@ onBeforeRouteLeave(async () => {
 }
 
 .editor-view {
-  width: 100%;
+  /* 与 LeftSidebar 同列 flex：勿用 width:100%，否则会与侧栏宽度叠加超出 workspace-main */
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
   height: 100%;
 }
 

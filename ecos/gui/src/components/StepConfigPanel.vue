@@ -45,16 +45,16 @@
 
       <!-- Main content -->
       <template v-else>
-        <div v-if="flowConfigReadError"
+        <div v-if="stepConfigReadError"
           class="mx-3 mt-3 p-3 rounded-lg border border-amber-500/35 bg-amber-500/10 shrink-0">
           <div class="flex items-start gap-2">
             <i class="ri-folder-warning-line text-amber-400 text-lg shrink-0 mt-0.5"></i>
-            <p class="text-[11px] text-amber-200/95 leading-relaxed break-words">{{ flowConfigReadError }}</p>
+            <p class="text-[11px] text-amber-200/95 leading-relaxed break-words">{{ stepConfigReadError }}</p>
           </div>
         </div>
 
-        <!-- Step mapping present: single column with toolbar + scroll region -->
-        <template v-if="flowConfigPathResolved && !flowConfigReadError && !stepMappingMissing">
+        <!-- Resolved path + editor -->
+        <template v-if="stepConfigPathResolved && !stepConfigReadError">
           <div class="sc-editor-body flex-1 min-h-0">
             <header class="topbar">
               <div class="topbar-left">
@@ -88,12 +88,7 @@
             </header>
 
             <div class="sc-scroll custom-scrollbar">
-            <div v-if="stepConfigReadError"
-              class="mb-3 p-3 rounded-lg border border-amber-500/35 bg-amber-500/10">
-              <p class="text-[11px] text-amber-200/95 break-words">{{ stepConfigReadError }}</p>
-            </div>
-
-            <template v-else-if="hasStepFileBody">
+            <template v-if="hasStepFileBody">
               <div v-if="stepConfigJsonInvalid" class="card mb-3">
                 <div class="card-head">
                   <i class="ri-alert-line c-orange"></i>
@@ -111,30 +106,11 @@
 
             </template>
 
-            <p v-else-if="stepConfigPathResolved && !stepConfigReadError"
+            <p v-else
               class="text-[11px] text-(--text-secondary) italic px-1">(empty file)</p>
             </div>
           </div>
         </template>
-
-        <!-- No mapping: full flow_config -->
-        <div v-else-if="flowConfigPathResolved && !flowConfigReadError && stepMappingMissing"
-          class="sc-editor-body flex-1 min-h-0">
-          <div class="sc-scroll custom-scrollbar p-3">
-            <section class="card">
-            <div class="card-head">
-              <i class="ri-git-branch-line c-cyan"></i>
-              <span>flow_config.json</span>
-            </div>
-            <div class="card-body">
-              <p class="text-[10px] font-mono break-all mb-2 text-(--text-secondary)">{{ flowConfigPathResolved }}</p>
-              <p class="text-[10px] text-(--text-secondary) mb-2">No ConfigPath mapping for this step; below is flow_config.json (read-only).</p>
-              <pre v-if="hasFlowFileBody"
-                class="max-h-[min(55vh,560px)] overflow-auto text-[10px] font-mono m-0 whitespace-pre-wrap break-all">{{ flowConfigDisplay }}</pre>
-            </div>
-            </section>
-          </div>
-        </div>
       </template>
     </div>
   </div>
@@ -155,10 +131,6 @@ const {
   serverMessages,
   isEmpty,
   refetch,
-  flowConfigPathResolved,
-  flowConfigDisplay,
-  flowConfigReadError,
-  stepMappingMissing,
   stepConfigPathResolved,
   stepConfigDisplay,
   stepConfigReadError,
@@ -180,7 +152,6 @@ const stepTitle = computed(() => {
 })
 
 const hasStepFileBody = computed(() => (stepConfigDisplay.value?.trim() ?? '').length > 0)
-const hasFlowFileBody = computed(() => (flowConfigDisplay.value?.trim() ?? '').length > 0)
 
 const stepConfigFileLabel = computed(() => {
   const p = stepConfigPathResolved.value

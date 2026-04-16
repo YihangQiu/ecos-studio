@@ -121,7 +121,8 @@ function setKey(k: string, v: unknown): void {
               option-label="label"
               option-value="value"
               size="small"
-              class="w-full max-w-xs"
+              fluid
+              class="min-w-0"
               @update:model-value="setKey(k, $event)" />
           </div>
           <!-- Number -->
@@ -130,50 +131,65 @@ function setKey(k: string, v: unknown): void {
             <InputNumber
               v-model="(draft as Record<string, number>)[k]"
               size="small"
+              fluid
               :use-grouping="false"
-              class="w-full max-w-xs" />
+              class="min-w-0" />
           </div>
           <!-- String scalar -->
           <div v-else-if="typeof draft[k] === 'string'" class="field">
             <label>{{ k }}</label>
-            <InputText v-model="(draft as Record<string, string>)[k]" size="small" class="w-full font-mono text-[11px]" />
+            <InputText
+              v-model="(draft as Record<string, string>)[k]"
+              size="small"
+              fluid
+              class="w-full min-w-0 font-mono text-[11px]" />
           </div>
           <!-- Number arrays: routing_layer / level_max_fanout, etc. -->
           <div v-else-if="Array.isArray(draft[k]) && (draft[k] as unknown[]).every((x) => typeof x === 'number')" class="field">
             <label>{{ k }}</label>
-            <div class="flex flex-wrap gap-1">
-              <span
+            <div class="space-y-2 w-full min-w-0">
+              <div
                 v-for="(_x, i) in (draft[k] as number[])"
                 :key="i"
-                class="inline-flex items-center gap-1 rounded border border-(--border-color) bg-(--bg-primary) px-1 py-0.5">
+                class="flex items-center gap-2 w-full min-w-0 rounded border border-(--border-color) bg-(--bg-primary) px-2 py-1.5">
                 <InputNumber
                   :model-value="(draft[k] as number[])[i]"
                   size="small"
+                  fluid
                   :use-grouping="false"
-                  class="w-16"
+                  class="min-w-0 w-full flex-1"
                   @update:model-value="((draft[k] as number[])[i] = $event ?? 0)" />
                 <button
                   type="button"
-                  class="sc-pro-btn sc-pro-btn--danger px-1 py-0"
+                  class="sc-pro-btn sc-pro-btn--danger shrink-0"
+                  title="Remove"
                   @click="(draft[k] as number[]).splice(i, 1)">
-                  <i class="ri-close-line text-[12px]"></i>
+                  <i class="ri-close-line"></i>
                 </button>
-              </span>
+              </div>
               <button type="button" class="sc-pro-btn" @click="(draft[k] as number[]).push(0)">
                 <i class="ri-add-line"></i>
+                Add
               </button>
             </div>
           </div>
           <!-- String array -->
           <div v-else-if="Array.isArray(draft[k]) && (draft[k] as unknown[]).every((x) => typeof x === 'string')" class="field">
             <label>{{ k }}</label>
-            <div class="space-y-1">
-              <div v-for="(_x, i) in (draft[k] as string[])" :key="i" class="flex gap-1 items-center">
+            <div class="space-y-1 w-full min-w-0">
+              <div
+                v-for="(_x, i) in (draft[k] as string[])"
+                :key="i"
+                class="flex w-full min-w-0 gap-2 items-center">
                 <InputText
                   v-model="(draft[k] as string[])[i]"
                   size="small"
-                  class="flex-1 font-mono text-[11px]" />
-                <button type="button" class="sc-pro-btn sc-pro-btn--danger" @click="(draft[k] as string[]).splice(i, 1)">
+                  fluid
+                  class="min-w-0 flex-1 font-mono text-[11px]" />
+                <button
+                  type="button"
+                  class="sc-pro-btn sc-pro-btn--danger shrink-0"
+                  @click="(draft[k] as string[]).splice(i, 1)">
                   <i class="ri-delete-bin-line"></i>
                 </button>
               </div>
@@ -186,14 +202,21 @@ function setKey(k: string, v: unknown): void {
           <!-- Mixed level_* string arrays -->
           <div v-else-if="Array.isArray(draft[k])" class="field">
             <label>{{ k }}</label>
-            <div class="space-y-1">
-              <div v-for="(_x, i) in (draft[k] as unknown[])" :key="i" class="flex gap-1 items-center">
+            <div class="space-y-1 w-full min-w-0">
+              <div
+                v-for="(_x, i) in (draft[k] as unknown[])"
+                :key="i"
+                class="flex w-full min-w-0 gap-2 items-center">
                 <InputText
                   :model-value="String((draft[k] as unknown[])[i])"
                   size="small"
-                  class="flex-1 font-mono text-[11px]"
+                  fluid
+                  class="min-w-0 flex-1 font-mono text-[11px]"
                   @update:model-value="(draft[k] as unknown[])[i] = $event" />
-                <button type="button" class="sc-pro-btn sc-pro-btn--danger" @click="(draft[k] as unknown[]).splice(i, 1)">
+                <button
+                  type="button"
+                  class="sc-pro-btn sc-pro-btn--danger shrink-0"
+                  @click="(draft[k] as unknown[]).splice(i, 1)">
                   <i class="ri-delete-bin-line"></i>
                 </button>
               </div>

@@ -19,7 +19,8 @@ const VIEW_MAP: Partial<Record<StepEnum, Component>> = {
   [StepEnum.FLOORPLAN]: FloorplanStepConfigView,
   [StepEnum.CTS]: CtsStepConfigView,
   [StepEnum.ROUTING]: RtStepConfigView,
-  [StepEnum.FILLER]: RtStepConfigView,
+  /** pl_default_config.json: root `PL` block — same schema as Placement / Legalization */
+  [StepEnum.FILLER]: PlStepConfigView,
   [StepEnum.DRC]: DrcStepConfigView,
   [StepEnum.PLACEMENT]: PlStepConfigView,
   [StepEnum.LEGALIZATION]: PlStepConfigView,

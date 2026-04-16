@@ -31,17 +31,30 @@ ensure()
         </div>
       </div>
       <div class="sc-pro-section__body space-y-3 sc-pro-path-field">
-        <div class="field">
+        <div class="field min-w-0 max-w-full">
           <label>tech_lef_path</label>
-          <InputText v-model="(draft.INPUT as Record<string, string>).tech_lef_path" size="small" />
+          <InputText
+            v-model="(draft.INPUT as Record<string, string>).tech_lef_path"
+            size="small"
+            fluid
+            class="min-w-0 max-w-full" />
         </div>
-        <div class="field">
+        <div class="field min-w-0 max-w-full">
           <label>lef_paths</label>
-          <Textarea v-model="(draft.INPUT as Record<string, string>).lef_paths" auto-resize rows="3" class="w-full" />
+          <Textarea
+            v-model="(draft.INPUT as Record<string, string>).lef_paths"
+            auto-resize
+            rows="3"
+            fluid
+            class="w-full min-w-0 max-w-full" />
         </div>
-        <div class="field">
+        <div class="field min-w-0 max-w-full">
           <label>def_path</label>
-          <InputText v-model="(draft.INPUT as Record<string, string>).def_path" size="small" />
+          <InputText
+            v-model="(draft.INPUT as Record<string, string>).def_path"
+            size="small"
+            fluid
+            class="min-w-0 max-w-full" />
         </div>
       </div>
     </section>
@@ -54,9 +67,13 @@ ensure()
         </div>
       </div>
       <div class="sc-pro-section__body sc-pro-path-field">
-        <div class="field">
+        <div class="field min-w-0 max-w-full">
           <label>output_dir_path</label>
-          <InputText v-model="(draft.OUTPUT as Record<string, string>).output_dir_path" size="small" />
+          <InputText
+            v-model="(draft.OUTPUT as Record<string, string>).output_dir_path"
+            size="small"
+            fluid
+            class="min-w-0 max-w-full" />
         </div>
       </div>
     </section>

@@ -6,6 +6,14 @@
   /* Wide tables/grids must not inflate min-content or the splitter column and scroll height break */
   min-width: 0;
   max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Nested JSON tree: flex rows need a shrinkable chain down to inputs */
+.step-config-root .sc-pro-value {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Hero metrics strip */
@@ -114,6 +122,9 @@
 
 .step-config-root .sc-pro-section__body {
   padding: 12px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* KV grid: two columns */
@@ -121,6 +132,25 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 12px;
+}
+
+/* Grid items default to min-width:auto — Prime inputs won't shrink; avoid column overlap */
+.step-config-root .sc-pro-grid > .field {
+  min-width: 0;
+}
+
+.step-config-root .sc-pro-grid > .field :deep(.p-inputtext),
+.step-config-root .sc-pro-grid > .field :deep(.p-inputnumber),
+.step-config-root .sc-pro-grid > .field :deep(.p-inputnumber-input) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Panel column narrow while window is still wide: use container size on .step-config-root */
+@container step-config (max-width: 720px) {
+  .step-config-root .sc-pro-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 520px) {
@@ -138,14 +168,18 @@
   grid-column: 1 / -1;
 }
 
-/* Data tables */
+/* Data tables: scroll inside panel; never stretch the splitter column */
 .step-config-root .sc-pro-table-wrap {
   border-radius: 8px;
   border: 1px solid var(--border-color);
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   min-width: 0;
   max-width: 100%;
+  width: 100%;
   background: var(--bg-primary);
+  box-sizing: border-box;
+  -webkit-overflow-scrolling: touch;
 }
 
 .step-config-root .sc-pro-table {
@@ -156,30 +190,80 @@
 }
 
 /*
- * Floorplan (and similar): avoid equal column splits from plain fixed layout.
- * Keep width: 100% only — no max-content — so the right Splitter column does not shrink.
+ * Uniform object-array tables (GenericStepConfig / dreamplace global_place_stages):
+ * many columns — let table grow past the panel and scroll horizontally; keep headers on one line.
  */
+.step-config-root .sc-pro-table--uniform {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+}
+
+.step-config-root .sc-pro-table--uniform thead th {
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+  vertical-align: bottom;
+}
+
+.step-config-root .sc-pro-table--uniform tbody td {
+  vertical-align: top;
+  min-width: 3rem;
+}
+
+.step-config-root .sc-pro-table--uniform tbody td:last-child {
+  min-width: 2.75rem;
+  width: 2.75rem;
+  max-width: 3rem;
+}
+
+.step-config-root .sc-pro-table--uniform :deep(.p-inputtext),
+.step-config-root .sc-pro-table--uniform :deep(.p-inputnumber),
+.step-config-root .sc-pro-table--uniform :deep(.p-inputnumber-input) {
+  min-width: 0 !important;
+}
+
+.step-config-root .sc-pro-table--uniform tbody td :deep(input.p-inputtext:only-child),
+.step-config-root .sc-pro-table--uniform tbody td :deep(.p-inputnumber-input) {
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 
 /*
- * Tracks: five equal data columns + action (same idea as Stripe).
+ * Tracks / Stripe (Floorplan): narrow inspector + table-layout:fixed → columns become tiny and
+ * thead wraps letter-by-letter. Same strategy as uniform tables: min column widths + horizontal scroll.
  */
+.step-config-root .sc-pro-table--tracks,
+.step-config-root .sc-pro-table--stripe {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+}
+
 .step-config-root .sc-pro-table--tracks col.sc-pro-tracks__col-data {
-  width: calc((100% - 2.75rem) / 5);
-  min-width: 0;
+  width: auto;
+  min-width: 4.5rem;
 }
 
 .step-config-root .sc-pro-table--tracks col.sc-pro-tracks__col-action {
   width: 2.75rem;
 }
 
-/* Stripe: six equal data columns; last column is row actions (see thead th:last-child width) */
 .step-config-root .sc-pro-table--stripe col.sc-pro-stripe__col-data {
-  width: calc((100% - 2.75rem) / 6);
-  min-width: 0;
+  width: auto;
+  min-width: 4rem;
 }
 
 .step-config-root .sc-pro-table--stripe col.sc-pro-stripe__col-action {
   width: 2.75rem;
+}
+
+.step-config-root .sc-pro-table--tracks thead th:not(:last-child),
+.step-config-root .sc-pro-table--stripe thead th:not(:last-child) {
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 /* PDN IO & Global connect: 3 cols + action */
@@ -274,14 +358,20 @@
 }
 
 /*
- * Tracks / Stripe：单元格内全是 InputText 时不要用 max-width:0 + overflow:hidden，
- * 否则会裁掉输入框右侧描边；列宽由 <colgroup> 约束。
+ * Tracks / Stripe：单元格内 InputText；列宽由横向滚动保证，数据列保留可读最小宽度。
  */
-.step-config-root .sc-pro-table--tracks thead th,
-.step-config-root .sc-pro-table--tracks tbody td,
-.step-config-root .sc-pro-table--stripe thead th,
-.step-config-root .sc-pro-table--stripe tbody td {
-  min-width: 0;
+.step-config-root .sc-pro-table--tracks thead th:not(:last-child),
+.step-config-root .sc-pro-table--stripe thead th:not(:last-child),
+.step-config-root .sc-pro-table--tracks tbody td:not(:last-child),
+.step-config-root .sc-pro-table--stripe tbody td:not(:last-child) {
+  min-width: 3rem;
+  overflow: visible;
+}
+
+.step-config-root .sc-pro-table--tracks thead th:last-child,
+.step-config-root .sc-pro-table--stripe thead th:last-child,
+.step-config-root .sc-pro-table--tracks tbody td:last-child,
+.step-config-root .sc-pro-table--stripe tbody td:last-child {
   overflow: visible;
 }
 
@@ -327,6 +417,10 @@
   word-break: break-all;
 }
 
+.step-config-root .sc-pro-flag__val {
+  min-width: 0;
+}
+
 .step-config-root .sc-pro-flag__val :deep(.p-inputtext) {
   font-family: 'Fira Code', ui-monospace, monospace;
   font-size: 11px;
@@ -355,6 +449,9 @@
   background: color-mix(in srgb, var(--bg-primary) 92%, var(--bg-secondary));
   padding: 10px;
   margin-bottom: 10px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .step-config-root .sc-pro-subpanel:last-child {

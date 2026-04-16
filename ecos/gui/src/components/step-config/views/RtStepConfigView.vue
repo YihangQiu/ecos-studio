@@ -37,11 +37,12 @@ function setRtKey(k: string, val: string | undefined): void {
       <div class="sc-pro-section__body flex flex-col gap-2">
         <div v-for="[k, v] in rtEntries" :key="k" class="sc-pro-flag">
           <div class="sc-pro-flag__key">{{ k }}</div>
-          <div class="sc-pro-flag__val">
+          <div class="sc-pro-flag__val min-w-0">
             <InputText
               :model-value="v === null || v === undefined ? '' : String(v)"
               size="small"
-              class="w-full"
+              fluid
+              class="w-full min-w-0"
               @update:model-value="setRtKey(k, $event)" />
           </div>
         </div>

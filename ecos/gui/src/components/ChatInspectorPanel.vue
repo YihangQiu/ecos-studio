@@ -4,8 +4,13 @@
       <button type="button" @click="activeTab = 'chat'" :class="tabClass(activeTab === 'chat')" title="AI Chat">
         <i class="ri-chat-3-line text-base"></i>
       </button>
-      <button type="button" @click="activeTab = 'inspector'" :class="tabClass(activeTab === 'inspector')"
-        title="Inspector">
+      <button
+        v-if="showStepConfigInspector"
+        type="button"
+        @click="activeTab = 'inspector'"
+        :class="tabClass(activeTab === 'inspector')"
+        title="Configuration"
+      >
         <i class="ri-layout-column-line text-base"></i>
       </button>
     </div>
@@ -17,7 +22,7 @@
       </KeepAlive>
 
       <StepConfigPanel
-        v-if="activeTab === 'inspector'"
+        v-if="activeTab === 'inspector' && showStepConfigInspector"
         class="flex-1 min-h-0 flex flex-col h-full min-w-0 overflow-hidden"
       />
     </div>
@@ -25,11 +30,33 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { StepEnum } from '@/api/type'
 import AIChatPanel from './AIChatPanel.vue'
 import StepConfigPanel from './StepConfigPanel.vue'
 
+const route = useRoute()
+const stepEnumValues = Object.values(StepEnum)
+
+function stepFromRoutePath(): StepEnum | undefined {
+  const segment = route.path.split('/').pop() || ''
+  return stepEnumValues.find((s) => s.toLowerCase() === segment.toLowerCase())
+}
+
+/** Synthesis 不提供步骤配置编辑，隐藏 Inspector 标签与面板 */
+const showStepConfigInspector = computed(() => stepFromRoutePath() !== StepEnum.SYNTHESIS)
+
 const activeTab = ref<'chat' | 'inspector'>('chat')
+
+watch(
+  () => route.path,
+  () => {
+    if (!showStepConfigInspector.value && activeTab.value === 'inspector') {
+      activeTab.value = 'chat'
+    }
+  },
+)
 
 function tabClass(active: boolean) {
   return [

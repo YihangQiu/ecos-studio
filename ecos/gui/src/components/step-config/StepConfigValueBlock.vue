@@ -117,20 +117,22 @@ function setPrim(i: number, v: unknown): void {
         v-if="typeof model === 'string'"
         :model-value="model"
         size="small"
-        class="w-full"
+        fluid
+        class="w-full min-w-0"
         @update:model-value="setScalar($event)" />
       <InputNumber
         v-else-if="typeof model === 'number'"
         :model-value="model"
         size="small"
-        class="w-full"
+        fluid
+        class="w-full min-w-0"
         :use-grouping="false"
         @update:model-value="setScalar($event ?? 0)" />
       <div v-else-if="typeof model === 'boolean'" class="flex items-center gap-2">
         <Checkbox :model-value="model" binary @update:model-value="setScalar($event)" />
         <span class="text-[11px] text-(--text-secondary)">{{ model ? 'true' : 'false' }}</span>
       </div>
-      <InputText v-else :model-value="String(model)" size="small" class="w-full" readonly />
+      <InputText v-else :model-value="String(model)" size="small" fluid class="w-full min-w-0" readonly />
     </template>
 
     <!-- Max depth exceeded: JSON -->
@@ -140,13 +142,14 @@ function setPrim(i: number, v: unknown): void {
         v-model="jsonEdit"
         auto-resize
         rows="6"
-        class="w-full font-mono text-[11px]"
+        fluid
+        class="w-full min-w-0 font-mono text-[11px]"
         @blur="applyJsonEdit" />
     </div>
 
     <!-- Uniform table -->
     <div v-else-if="uniformTable" class="sc-pro-table-wrap">
-      <table class="sc-pro-table">
+      <table class="sc-pro-table sc-pro-table--uniform">
         <thead>
           <tr>
             <th v-for="k in uniformTable.keys" :key="k">{{ k }}</th>
@@ -167,13 +170,15 @@ function setPrim(i: number, v: unknown): void {
                 v-else-if="typeof row[k] === 'string'"
                 :model-value="row[k] as string"
                 size="small"
-                class="w-full min-w-[64px]"
+                fluid
+                class="w-full min-w-0"
                 @update:model-value="setCell(ri, k, $event)" />
               <InputNumber
                 v-else-if="typeof row[k] === 'number'"
                 :model-value="row[k] as number"
                 size="small"
-                class="w-full min-w-[64px]"
+                fluid
+                class="w-full min-w-0"
                 :use-grouping="false"
                 @update:model-value="setCell(ri, k, $event ?? 0)" />
               <Checkbox
@@ -181,7 +186,7 @@ function setPrim(i: number, v: unknown): void {
                 :model-value="row[k] as boolean"
                 binary
                 @update:model-value="setCell(ri, k, $event)" />
-              <InputText v-else :model-value="formatFallback(row[k])" size="small" class="w-full" readonly />
+              <InputText v-else :model-value="formatFallback(row[k])" size="small" fluid class="w-full min-w-0" readonly />
             </td>
             <td>
               <button type="button" class="sc-pro-btn sc-pro-btn--danger" title="Remove row" @click="removeAt(ri)">
@@ -199,31 +204,47 @@ function setPrim(i: number, v: unknown): void {
       </div>
     </div>
 
-    <!-- Primitive array -->
-    <div v-else-if="Array.isArray(model)" class="space-y-1">
-      <div v-for="(_x, i) in model as unknown[]" :key="i" class="flex gap-1 items-center">
+    <!-- Primitive array: input must shrink (fluid) or delete button is clipped in narrow panels -->
+    <div v-else-if="Array.isArray(model)" class="space-y-1 min-w-0">
+      <div
+        v-for="(_x, i) in model as unknown[]"
+        :key="i"
+        class="flex w-full min-w-0 gap-2 items-center">
         <InputText
           v-if="typeof (model as unknown[])[i] === 'string'"
           :model-value="(model as string[])[i]"
           size="small"
-          class="flex-1 min-w-0"
+          fluid
+          class="min-w-0 flex-1"
           @update:model-value="setPrim(i, $event)" />
         <InputNumber
           v-else-if="typeof (model as unknown[])[i] === 'number'"
           :model-value="(model as number[])[i]"
           size="small"
-          class="flex-1 min-w-0"
+          fluid
+          class="min-w-0 flex-1"
           :use-grouping="false"
           @update:model-value="setPrim(i, $event ?? 0)" />
-        <StepConfigValueBlock
-          v-else-if="isObj((model as unknown[])[i]) || Array.isArray((model as unknown[])[i])"
-          :model-value="(model as unknown[])[i]"
-          :depth="depth + 1"
-          :max-depth="maxDepth"
-          :accent="accent"
-          @update:model-value="setPrim(i, $event)" />
-        <InputText v-else :model-value="formatFallback((model as unknown[])[i])" size="small" class="flex-1" readonly />
-        <button type="button" class="sc-pro-btn sc-pro-btn--danger" @click="removeAt(i)">
+        <div v-else-if="isObj((model as unknown[])[i]) || Array.isArray((model as unknown[])[i])" class="min-w-0 flex-1">
+          <StepConfigValueBlock
+            :model-value="(model as unknown[])[i]"
+            :depth="depth + 1"
+            :max-depth="maxDepth"
+            :accent="accent"
+            @update:model-value="setPrim(i, $event)" />
+        </div>
+        <InputText
+          v-else
+          :model-value="formatFallback((model as unknown[])[i])"
+          size="small"
+          fluid
+          class="min-w-0 flex-1"
+          readonly />
+        <button
+          type="button"
+          class="sc-pro-btn sc-pro-btn--danger shrink-0"
+          title="Remove"
+          @click="removeAt(i)">
           <i class="ri-close-line"></i>
         </button>
       </div>

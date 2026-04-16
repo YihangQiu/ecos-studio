@@ -4,7 +4,6 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { getInfoApi } from '@/api/flow'
 import { CMDEnum, InfoEnum, ResponseEnum, StepEnum } from '@/api/type'
 import { convertRemoteToLocalPath } from '@/composables/useHomeData'
-import { getConfigPathKeyForStep } from '@/composables/stepFlowConfigKeys'
 import { useTauri } from '@/composables/useTauri'
 import { useWorkspace } from '@/composables/useWorkspace'
 
@@ -64,25 +63,14 @@ function extractInfoPayload(response: unknown): Record<string, unknown> | null {
   return null
 }
 
-function getConfigPathObject(root: Record<string, unknown>): Record<string, unknown> | null {
-  const cp = root.ConfigPath ?? root.configPath
-  if (cp && typeof cp === 'object' && cp !== null && !Array.isArray(cp)) {
-    return cp as Record<string, unknown>
-  }
-  return null
-}
-
-/** flow_config path from get_info/config: ecc uses `flow`, legacy uses `path`. */
-function pickFlowConfigJsonPath(data: Record<string, unknown>): string | undefined {
-  const flow = data.flow
-  const path = data.path
-  if (typeof flow === 'string' && flow.trim()) return flow.trim()
-  if (typeof path === 'string' && path.trim()) return path.trim()
-  return undefined
+/** Resolved step config file path from `get_info` → `data.info.config`. */
+function pickStepConfigPathFromInfo(data: Record<string, unknown>): string | undefined {
+  const v = data.config
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined
 }
 
 /**
- * Fetch get_info/config → read flow_config.json → resolve ConfigPath per step (e.g. Floorplan → ifp_path → fp_default_config.json).
+ * Fetch get_info/config → read `info.config` from disk as the step configuration file.
  */
 export function useStepConfigInfo() {
   const route = useRoute()
@@ -96,12 +84,6 @@ export function useStepConfigInfo() {
   const serverMessages = ref<string[]>([])
   const responseKind = ref<'idle' | 'success' | 'warning' | 'failed' | 'error'>('idle')
 
-  const flowConfigPathResolved = ref<string | null>(null)
-  const flowConfigRaw = ref<string | null>(null)
-  const flowConfigReadError = ref<string | null>(null)
-
-  const configPathKeyUsed = ref<string | null>(null)
-  const stepMappingMissing = ref(false)
   const stepConfigPathResolved = ref<string | null>(null)
   const stepConfigRaw = ref<string | null>(null)
   const stepConfigReadError = ref<string | null>(null)
@@ -157,15 +139,15 @@ export function useStepConfigInfo() {
       if (response.response === ResponseEnum.success) {
         responseKind.value = 'success'
         info.value = payload ?? {}
-        await loadConfigFilesFromInfo(info.value, stepEnum)
+        await loadStepConfigFileFromInfo(info.value)
         return
       }
 
       if (response.response === ResponseEnum.warning) {
         responseKind.value = 'warning'
         info.value = payload
-        if (payload && pickFlowConfigJsonPath(payload)) {
-          await loadConfigFilesFromInfo(payload, stepEnum)
+        if (payload && pickStepConfigPathFromInfo(payload)) {
+          await loadStepConfigFileFromInfo(payload)
         }
         return
       }
@@ -183,11 +165,6 @@ export function useStepConfigInfo() {
   }
 
   function clearFileState() {
-    flowConfigPathResolved.value = null
-    flowConfigRaw.value = null
-    flowConfigReadError.value = null
-    configPathKeyUsed.value = null
-    stepMappingMissing.value = false
     stepConfigPathResolved.value = null
     stepConfigRaw.value = null
     stepConfigReadError.value = null
@@ -236,70 +213,24 @@ export function useStepConfigInfo() {
     }
   }
 
-  async function loadConfigFilesFromInfo(data: Record<string, unknown>, stepEnum: StepEnum) {
-    const rawPath = pickFlowConfigJsonPath(data)
+  async function loadStepConfigFileFromInfo(data: Record<string, unknown>) {
+    const rawPath = pickStepConfigPathFromInfo(data)
     if (!rawPath) {
       return
     }
 
     const projectPath = currentProject.value?.path ?? ''
-    const flowLocal = projectPath
-      ? convertRemoteToLocalPath(rawPath, projectPath)
-      : rawPath
-    flowConfigPathResolved.value = flowLocal
+    const localPath = projectPath ? convertRemoteToLocalPath(rawPath, projectPath) : rawPath
+    stepConfigPathResolved.value = localPath
 
     if (!isInTauri) {
-      flowConfigReadError.value =
+      stepConfigReadError.value =
         'Reading local config requires ECOS Studio desktop (Tauri). Browser mode cannot access project files.'
       return
     }
 
     try {
-      flowConfigRaw.value = await readTextFile(flowLocal)
-      flowConfigReadError.value = null
-    } catch (e) {
-      flowConfigRaw.value = null
-      flowConfigReadError.value = e instanceof Error ? e.message : String(e)
-      return
-    }
-
-    const pathKey = getConfigPathKeyForStep(stepEnum)
-    configPathKeyUsed.value = pathKey ?? null
-
-    if (!pathKey) {
-      stepMappingMissing.value = true
-      return
-    }
-    stepMappingMissing.value = false
-
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(flowConfigRaw.value)
-    } catch {
-      stepConfigReadError.value = 'Failed to parse flow_config.json: not valid JSON'
-      return
-    }
-
-    const root = parsed && typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null
-    const configPath = root ? getConfigPathObject(root) : null
-    if (!configPath) {
-      stepConfigReadError.value = 'flow_config.json is missing a ConfigPath object'
-      return
-    }
-
-    const nestedPath = configPath[pathKey]
-    if (typeof nestedPath !== 'string' || !nestedPath.trim()) {
-      stepConfigReadError.value = `ConfigPath has no entry for "${pathKey}" (e.g. Floorplan uses ifp_path)`
-      return
-    }
-
-    const stepLocal = projectPath
-      ? convertRemoteToLocalPath(nestedPath.trim(), projectPath)
-      : nestedPath.trim()
-    stepConfigPathResolved.value = stepLocal
-
-    try {
-      stepConfigRaw.value = await readTextFile(stepLocal)
+      stepConfigRaw.value = await readTextFile(localPath)
       stepConfigReadError.value = null
     } catch (e) {
       stepConfigRaw.value = null
@@ -319,12 +250,11 @@ export function useStepConfigInfo() {
   const isEmpty = computed(() => {
     if (responseKind.value === 'idle') return true
     if (responseKind.value === 'error' || responseKind.value === 'failed') return false
-    if (flowConfigPathResolved.value || flowConfigRaw.value || stepConfigRaw.value) return false
+    if (stepConfigPathResolved.value || stepConfigRaw.value) return false
     if (info.value && Object.keys(info.value).length > 0) return false
     return responseKind.value === 'warning' || responseKind.value === 'success'
   })
 
-  const flowConfigDisplay = computed(() => prettyJsonOrRaw(flowConfigRaw.value))
   const stepConfigDisplay = computed(() => prettyJsonOrRaw(stepConfigRaw.value))
 
   /** Parsed step config file for structured UI; null if parse fails */
@@ -433,12 +363,6 @@ export function useStepConfigInfo() {
     responseKind,
     isEmpty,
     refetch,
-    flowConfigPathResolved,
-    flowConfigRaw,
-    flowConfigDisplay,
-    flowConfigReadError,
-    configPathKeyUsed,
-    stepMappingMissing,
     stepConfigPathResolved,
     stepConfigRaw,
     stepConfigDisplay,

@@ -1,5 +1,6 @@
 export enum CMDEnum {
   create_workspace = "create_workspace",
+  set_pdk_root = "set_pdk_root",
   load_workspace = "load_workspace",
   delete_workspace = "delete_workspace",
   rtl2gds = "rtl2gds",
@@ -139,4 +140,3 @@ export interface ResponseData<T> {
   data: T;
   message: string[];
 }
-

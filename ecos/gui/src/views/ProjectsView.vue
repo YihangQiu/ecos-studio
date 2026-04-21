@@ -56,10 +56,10 @@
       <div class="flex-1 overflow-y-auto space-y-3 scrollbar-thin pb-4" v-if="filteredProjects.length > 0">
         <div v-for="project in filteredProjects" :key="project.id"
           class="flex items-start gap-4 px-5 py-4 bg-(--bg-secondary) rounded-xl border transition-all duration-200 group"
-          :class="project.pathExists === false
+          :class="project.workspaceRecognized === false
             ? 'border-(--border-color) opacity-50 cursor-default'
             : 'border-(--border-color) hover:border-(--accent-color) hover:shadow-md cursor-pointer'"
-          @click="project.pathExists !== false && handleOpen(project)">
+          @click="project.workspaceRecognized !== false && handleOpen(project)">
 
           <!-- Status icon -->
           <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
@@ -81,9 +81,9 @@
                 class="text-[10px] px-1.5 py-0.5 rounded bg-(--accent-color)/10 text-(--accent-color) font-medium shrink-0">
                 {{ project.pdk }}
               </span>
-              <span v-if="project.pathExists === false"
+              <span v-if="project.workspaceRecognized === false"
                 class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 font-medium shrink-0">
-                Path not reachable
+                Workspace not recognized
               </span>
             </div>
 

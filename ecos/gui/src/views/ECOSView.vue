@@ -129,7 +129,7 @@
       <div v-if="lastProject" class="w-full max-w-2xl mb-8">
         <button @click="handleResume"
           class="w-full flex items-center gap-4 px-6 py-4 bg-(--bg-secondary) rounded-xl border border-(--border-color) hover:border-(--accent-color) transition-all duration-200 cursor-pointer group"
-          :class="lastProject.pathExists === false ? 'opacity-50 pointer-events-none' : 'hover:shadow-lg hover:shadow-(--accent-color)/5'">
+          :class="lastProject.workspaceRecognized === false ? 'opacity-50 pointer-events-none' : 'hover:shadow-lg hover:shadow-(--accent-color)/5'">
           <div class="w-11 h-11 rounded-lg bg-(--accent-color)/10 flex items-center justify-center shrink-0 group-hover:bg-(--accent-color)/20 transition-colors">
             <i class="ri-folder-line text-xl text-(--accent-color)"></i>
           </div>
@@ -150,7 +150,7 @@
                 {{ lastProject.completedSteps }}/{{ lastProject.totalSteps }} steps
               </span>
               <span>{{ formatDate(lastProject.lastOpened) }}</span>
-              <span v-if="lastProject.pathExists === false" class="text-red-400">Path not reachable</span>
+              <span v-if="lastProject.workspaceRecognized === false" class="text-red-400">Workspace not recognized</span>
             </div>
           </div>
           <div class="flex items-center gap-2 text-(--text-secondary) group-hover:text-(--accent-color) transition-colors shrink-0">
@@ -204,7 +204,7 @@ const handleRemovePdk = async (id: string) => {
 }
 
 const handleResume = async () => {
-  if (!lastProject.value || lastProject.value.pathExists === false) return
+  if (!lastProject.value || lastProject.value.workspaceRecognized === false) return
   const success = await openProject(lastProject.value)
   if (success) router.push('/workspace')
 }

@@ -104,6 +104,7 @@ import { CMDEnum, InfoEnum, StepEnum, ResponseEnum } from '../api/type'
 import { useTauri } from '../composables/useTauri'
 import { useWorkspace } from '../composables/useWorkspace'
 import { readTextFile } from '@tauri-apps/plugin-fs'
+import { requestProjectPathAccess } from '@/utils/projectFs'
 import MapsGallery from './MapsGallery.vue'
 import type { MapInfo as MapInfoType } from '../types'
 
@@ -378,6 +379,9 @@ async function handleKeyClick(key: string, value: unknown) {
         // 转换远程路径为本地路径
         const localPath = convertToLocalPath(path)
         console.log('localPath:', localPath)
+        if (!(await requestProjectPathAccess(localPath))) {
+          content = `File path: ${localPath}\n(No file-system access in current workspace scope)`
+        } else {
         const fileContent = await readTextFile(localPath)
 
         if (format === 'json') {
@@ -388,6 +392,7 @@ async function handleKeyClick(key: string, value: unknown) {
           }
         } else {
           content = fileContent
+        }
         }
       }
     } else {

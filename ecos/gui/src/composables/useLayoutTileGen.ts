@@ -1,6 +1,7 @@
 import { isAbsolute, join, normalize } from '@tauri-apps/api/path'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { isTauri } from '@/composables/useTauri'
+import { requestProjectPathAccess } from '@/utils/projectFs'
 
 /**
  * 将 get_info(layout) 给出的路径解析为绝对路径。
@@ -92,8 +93,9 @@ export async function runLayoutTileGeneration(params: {
   const { projectPath, layoutJsonRelative, stepKey } = params
   const inputAbs = await resolveLayoutJsonAbsolutePath(projectPath, layoutJsonRelative)
 
-  // 与打开工程时一致：工程根目录纳入 scope（读布局 JSON 等）
-  await invoke('request_project_permission', { path: projectPath })
+  if (!(await requestProjectPathAccess(inputAbs))) {
+    throw new Error(`No file-system access to ${inputAbs}`)
+  }
 
   const prep = await invoke<{
     outDir: string

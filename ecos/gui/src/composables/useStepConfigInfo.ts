@@ -4,6 +4,7 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { getInfoApi } from '@/api/flow'
 import { CMDEnum, InfoEnum, ResponseEnum, StepEnum } from '@/api/type'
 import { convertRemoteToLocalPath } from '@/composables/useHomeData'
+import { requestProjectPathAccess } from '@/utils/projectFs'
 import { useTauri } from '@/composables/useTauri'
 import { useWorkspace } from '@/composables/useWorkspace'
 
@@ -230,6 +231,11 @@ export function useStepConfigInfo() {
     }
 
     try {
+      if (!(await requestProjectPathAccess(localPath))) {
+        stepConfigRaw.value = null
+        stepConfigReadError.value = `No file-system access to ${localPath}`
+        return
+      }
       stepConfigRaw.value = await readTextFile(localPath)
       stepConfigReadError.value = null
     } catch (e) {
@@ -319,6 +325,10 @@ export function useStepConfigInfo() {
     }
     isSavingStepConfig.value = true
     try {
+      if (!(await requestProjectPathAccess(path))) {
+        stepConfigSaveError.value = `No file-system access to ${path}`
+        return false
+      }
       let text: string
       if (!rawLooksValidJson(stepConfigRaw.value ?? '')) {
         text = stepConfigTextDraft.value

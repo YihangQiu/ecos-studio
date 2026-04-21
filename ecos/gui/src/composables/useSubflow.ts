@@ -4,6 +4,7 @@ import { readTextFile } from '@tauri-apps/plugin-fs'
 import { useTauri } from './useTauri'
 import { useWorkspace } from './useWorkspace'
 import { convertRemoteToLocalPath } from './useHomeData'
+import { requestProjectPathAccess } from '@/utils/projectFs'
 import { getInfoApi } from '@/api/flow'
 import { CMDEnum, InfoEnum, StepEnum, ResponseEnum } from '@/api/type'
 import type { ECCResponse } from '@/api/sse'
@@ -199,6 +200,10 @@ export function useSubflow() {
         return
       }
 
+      if (!(await requestProjectPathAccess(subflowPath))) {
+        subflowSteps.value = []
+        return
+      }
       const fileContent = await readTextFile(subflowPath)
       const subflowData: SubflowData = JSON.parse(fileContent)
 
@@ -232,6 +237,7 @@ export function useSubflow() {
         : subflowPath
 
       console.log('Loading subflow from SSE path:', localPath)
+      if (!(await requestProjectPathAccess(localPath))) return
 
       const fileContent = await readTextFile(localPath)
       const subflowData: SubflowData = JSON.parse(fileContent)

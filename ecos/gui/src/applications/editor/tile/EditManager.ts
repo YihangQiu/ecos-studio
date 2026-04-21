@@ -212,6 +212,41 @@ export class EditManager {
     this._notifyChange()
   }
 
+  // ─── 旋转 instance（= moveInstance 的便捷封装，绕 bbox 中心旋转）────────────
+
+  /**
+   * 原地旋转 instance 并保留 bbox 视觉中心。
+   *
+   * 以 bbox 中心为基点换算新的 originX/originY，再走 moveInstance（= delete+add，
+   * 带 undo）。对 tile instance 旋转后 ID 会被分配新的编辑 ID；edit instance 会
+   * 保留原 ID。返回新插入的 EditInstance，供调用方刷新选中状态。
+   */
+  rotateInstance(
+    instanceId: number,
+    cellId: number,
+    originX: number, originY: number,
+    oldOrient: number, newOrient: number,
+    preparedLayers?: PreparedLayer[],
+  ): EditInstance | null {
+    const def = this.cellStore.getCellDef(cellId)
+    if (!def) return null
+
+    const oldSwapped = oldOrient === 2 || oldOrient === 3 || oldOrient === 6 || oldOrient === 7
+    const newSwapped = newOrient === 2 || newOrient === 3 || newOrient === 6 || newOrient === 7
+    const oldW = oldSwapped ? def.bboxH : def.bboxW
+    const oldH = oldSwapped ? def.bboxW : def.bboxH
+    const newW = newSwapped ? def.bboxH : def.bboxW
+    const newH = newSwapped ? def.bboxW : def.bboxH
+
+    const cx = originX + oldW / 2
+    const cy = originY + oldH / 2
+    const newOriginX = cx - newW / 2
+    const newOriginY = cy - newH / 2
+
+    this.moveInstance(instanceId, newOriginX, newOriginY, cellId, newOrient, preparedLayers)
+    return this.addedInstances[this.addedInstances.length - 1] ?? null
+  }
+
   // ─── Undo / Redo ──────────────────────────────────────────────────────────
 
   undo(): boolean {

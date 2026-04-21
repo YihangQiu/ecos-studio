@@ -1,9 +1,9 @@
-import { ref, reactive, watch, onMounted, computed } from 'vue'
+import { ref, reactive, watch, computed } from 'vue'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
-import { invoke } from '@tauri-apps/api/core'
 import { useWorkspace } from './useWorkspace'
 import { useTauri } from './useTauri'
 import { fetchSharedHomeData, convertRemoteToLocalPath } from './useHomeData'
+import { resolveProjectPathAccess } from '@/utils/projectFs'
 
 // ============ 类型定义 ============
 // 与 ecc/chipcompiler/data/parameter.py 中 ICS55_PARAMETERS_TEMPLATE 及 workspace 写入的 PDK Root 对齐
@@ -98,7 +98,69 @@ function getDefaultConfig(): ConfigData {
   }
 }
 
-function transformParametersToConfig(data: ParametersData): ConfigData {
+function normalizeDie(d: unknown): ParametersData['Die'] {
+  if (!d || typeof d !== 'object') return { Size: [], Area: 0 }
+  const o = d as Record<string, unknown>
+  const size = o.Size
+  const arr = Array.isArray(size) ? size.map(Number) : []
+  return {
+    Size: arr,
+    Area: o.Area != null ? Number(o.Area) : 0
+  }
+}
+
+function normalizeCore(c: unknown): ParametersData['Core'] {
+  if (!c || typeof c !== 'object') {
+    return {
+      Size: [],
+      Area: 0,
+      'Bounding box': '',
+      Utilitization: 0.4,
+      Margin: [2, 2],
+      'Aspect ratio': 1
+    }
+  }
+  const o = c as Record<string, unknown>
+  const size = o.Size
+  const arr = Array.isArray(size) ? size.map(Number) : []
+  const margin = o.Margin
+  let m: [number, number] = [2, 2]
+  if (Array.isArray(margin) && margin.length >= 2) {
+    m = [Number(margin[0]), Number(margin[1])]
+  }
+  return {
+    Size: arr,
+    Area: o.Area != null ? Number(o.Area) : 0,
+    'Bounding box': String(o['Bounding box'] ?? ''),
+    Utilitization: Number(o.Utilitization ?? 0.4),
+    Margin: m,
+    'Aspect ratio': Number(o['Aspect ratio'] ?? 1)
+  }
+}
+
+export function parseParametersData(fileContent: string): ParametersData {
+  const raw = JSON.parse(fileContent) as Record<string, unknown>
+  return {
+    PDK: String(raw.PDK ?? ''),
+    Design: String(raw.Design ?? ''),
+    'Top module': String(raw['Top module'] ?? ''),
+    Die: normalizeDie(raw.Die),
+    Core: normalizeCore(raw.Core),
+    'Max fanout': Number(raw['Max fanout'] ?? 20),
+    'Target density': Number(raw['Target density'] ?? 0.3),
+    'Target overflow': Number(raw['Target overflow'] ?? 0.1),
+    'Global right padding': Number(raw['Global right padding'] ?? 0),
+    'Cell padding x': Number(raw['Cell padding x'] ?? 600),
+    'Routability opt flag': Number(raw['Routability opt flag'] ?? 1),
+    Clock: String(raw.Clock ?? ''),
+    'Frequency max [MHz]': Number(raw['Frequency max [MHz]'] ?? 100),
+    'Bottom layer': String(raw['Bottom layer'] ?? 'MET2'),
+    'Top layer': String(raw['Top layer'] ?? 'MET5'),
+    'PDK Root': raw['PDK Root'] != null ? String(raw['PDK Root']) : undefined
+  }
+}
+
+export function transformParametersToConfig(data: ParametersData): ConfigData {
   return {
     pdk: data.PDK || '',
     pdkRoot: data['PDK Root'] ?? '',
@@ -129,7 +191,7 @@ function transformParametersToConfig(data: ParametersData): ConfigData {
   }
 }
 
-function transformConfigToParameters(config: ConfigData): ParametersData {
+export function transformConfigToParameters(config: ConfigData): ParametersData {
   const out: ParametersData = {
     PDK: config.pdk,
     Design: config.design,
@@ -180,14 +242,11 @@ export function useParameters() {
   let originalConfig: string = ''
   let resolvedParametersPath: string = ''
 
-  async function requestPermission(path: string): Promise<boolean> {
-    try {
-      await invoke('request_project_permission', { path })
-      return true
-    } catch (permError) {
-      console.warn('Failed to request file access permission:', permError)
-      return false
-    }
+  function resetParametersState(): void {
+    Object.assign(config, getDefaultConfig())
+    originalConfig = ''
+    resolvedParametersPath = ''
+    hasChanges.value = false
   }
 
   function convertToLocalPath(remotePath: string): string {
@@ -198,59 +257,44 @@ export function useParameters() {
   async function loadParameters(): Promise<void> {
     if (!isInTauri || !currentProject.value?.path) {
       console.warn('Cannot load parameters: not in Tauri environment or no project is open')
-      Object.assign(config, getDefaultConfig())
+      resetParametersState()
       return
     }
 
     isLoading.value = true
     error.value = null
+    resolvedParametersPath = ''
 
     try {
       const projectPath = currentProject.value.path
-      await requestPermission(projectPath)
 
       const homeData = await fetchSharedHomeData(projectPath, isInTauri)
       if (!homeData) {
         console.warn('Failed to get home data')
-        Object.assign(config, getDefaultConfig())
+        resetParametersState()
         return
       }
 
       if (!homeData.parameters) {
         console.warn('No parameters field found in home.json')
-        Object.assign(config, getDefaultConfig())
+        resetParametersState()
         return
       }
 
       const parametersPath = convertToLocalPath(homeData.parameters)
-      console.log('Loading parameters from:', parametersPath)
-
-      const fileContent = await readTextFile(parametersPath)
-      const raw = JSON.parse(fileContent) as Record<string, unknown>
-
-      // 兼容旧版含 Floorplan/PDN 的文件：仅读取顶层 ICS55 字段，忽略扩展块
-      const parametersData: ParametersData = {
-        PDK: String(raw.PDK ?? ''),
-        Design: String(raw.Design ?? ''),
-        'Top module': String(raw['Top module'] ?? ''),
-        Die: normalizeDie(raw.Die),
-        Core: normalizeCore(raw.Core),
-        'Max fanout': Number(raw['Max fanout'] ?? 20),
-        'Target density': Number(raw['Target density'] ?? 0.3),
-        'Target overflow': Number(raw['Target overflow'] ?? 0.1),
-        'Global right padding': Number(raw['Global right padding'] ?? 0),
-        'Cell padding x': Number(raw['Cell padding x'] ?? 600),
-        'Routability opt flag': Number(raw['Routability opt flag'] ?? 1),
-        Clock: String(raw.Clock ?? ''),
-        'Frequency max [MHz]': Number(raw['Frequency max [MHz]'] ?? 100),
-        'Bottom layer': String(raw['Bottom layer'] ?? 'MET2'),
-        'Top layer': String(raw['Top layer'] ?? 'MET5'),
-        'PDK Root': raw['PDK Root'] != null ? String(raw['PDK Root']) : undefined
+      const resolvedPath = await resolveProjectPathAccess(parametersPath)
+      console.log('Loading parameters from:', resolvedPath ?? parametersPath)
+      if (!resolvedPath) {
+        resetParametersState()
+        return
       }
+
+      const fileContent = await readTextFile(resolvedPath)
+      const parametersData = parseParametersData(fileContent)
 
       console.log('Loaded parameters data:', parametersData)
 
-      resolvedParametersPath = parametersPath
+      resolvedParametersPath = resolvedPath
 
       const transformedConfig = transformParametersToConfig(parametersData)
       Object.assign(config, transformedConfig)
@@ -262,49 +306,9 @@ export function useParameters() {
     } catch (err) {
       console.error('Failed to load parameters:', err)
       error.value = err instanceof Error ? err.message : String(err)
-      Object.assign(config, getDefaultConfig())
+      resetParametersState()
     } finally {
       isLoading.value = false
-    }
-  }
-
-  function normalizeDie(d: unknown): ParametersData['Die'] {
-    if (!d || typeof d !== 'object') return { Size: [], Area: 0 }
-    const o = d as Record<string, unknown>
-    const size = o.Size
-    const arr = Array.isArray(size) ? size.map(Number) : []
-    return {
-      Size: arr,
-      Area: o.Area != null ? Number(o.Area) : 0
-    }
-  }
-
-  function normalizeCore(c: unknown): ParametersData['Core'] {
-    if (!c || typeof c !== 'object') {
-      return {
-        Size: [],
-        Area: 0,
-        'Bounding box': '',
-        Utilitization: 0.4,
-        Margin: [2, 2],
-        'Aspect ratio': 1
-      }
-    }
-    const o = c as Record<string, unknown>
-    const size = o.Size
-    const arr = Array.isArray(size) ? size.map(Number) : []
-    const margin = o.Margin
-    let m: [number, number] = [2, 2]
-    if (Array.isArray(margin) && margin.length >= 2) {
-      m = [Number(margin[0]), Number(margin[1])]
-    }
-    return {
-      Size: arr,
-      Area: o.Area != null ? Number(o.Area) : 0,
-      'Bounding box': String(o['Bounding box'] ?? ''),
-      Utilitization: Number(o.Utilitization ?? 0.4),
-      Margin: m,
-      'Aspect ratio': Number(o['Aspect ratio'] ?? 1)
     }
   }
 
@@ -323,15 +327,16 @@ export function useParameters() {
     error.value = null
 
     try {
-      const projectPath = currentProject.value.path
-      await requestPermission(projectPath)
-
       console.log('Saving parameters to:', resolvedParametersPath)
+      const resolvedPath = await resolveProjectPathAccess(resolvedParametersPath)
+      if (!resolvedPath) {
+        return false
+      }
 
       const parametersData = transformConfigToParameters(config)
       const fileContent = JSON.stringify(parametersData, null, 4)
 
-      await writeTextFile(resolvedParametersPath, fileContent)
+      await writeTextFile(resolvedPath, fileContent)
 
       originalConfig = JSON.stringify(config)
       hasChanges.value = false
@@ -372,19 +377,11 @@ export function useParameters() {
       if (newPath) {
         await loadParameters()
       } else {
-        Object.assign(config, getDefaultConfig())
-        originalConfig = ''
-        hasChanges.value = false
+        resetParametersState()
       }
     },
     { immediate: true }
   )
-
-  onMounted(async () => {
-    if (currentProject.value?.path) {
-      await loadParameters()
-    }
-  })
 
   const layerOptions = computed(() => {
     return ROUTING_LAYER_ORDER.map(layer => ({ label: layer, value: layer }))

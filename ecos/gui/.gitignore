@@ -40,3 +40,6 @@ assets/*.json
 
 .cursor
 openspec/
+
+.agents/
+skills-lock.json

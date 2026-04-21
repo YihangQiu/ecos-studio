@@ -78,28 +78,28 @@
         <div v-else class="space-y-2 max-h-[280px] overflow-y-auto scrollbar-thin">
           <div v-for="project in displayedProjects" :key="project.id"
             class="w-full flex items-center justify-between px-5 py-4 bg-(--bg-secondary) rounded-xl transition-all duration-200 border text-left group"
-            :class="project.pathExists === false
+            :class="project.workspaceRecognized === false
               ? 'border-(--border-color) opacity-55 cursor-default'
               : 'border-(--border-color) hover:border-(--accent-color) hover:bg-(--bg-sidebar) cursor-pointer hover:shadow-md'"
-            @click="project.pathExists !== false && $emit('open-recent', project)">
+            @click="project.workspaceRecognized !== false && $emit('open-recent', project)">
             <div class="flex items-center gap-4 flex-1 min-w-0">
-              <div class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors" :class="project.pathExists === false
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors" :class="project.workspaceRecognized === false
                 ? 'bg-red-500/10'
                 : 'bg-(--accent-color)/10 group-hover:bg-(--accent-color)/20'">
-                <i :class="project.pathExists === false
+                <i :class="project.workspaceRecognized === false
                   ? 'ri-folder-warning-line text-lg text-red-400'
                   : 'ri-folder-line text-lg text-(--accent-color)'"></i>
               </div>
               <div class="flex-1 min-w-0">
                 <p class="font-medium truncate"
-                  :class="project.pathExists === false ? 'text-(--text-secondary)' : 'text-(--text-primary)'">
+                  :class="project.workspaceRecognized === false ? 'text-(--text-secondary)' : 'text-(--text-primary)'">
                   {{ project.name }}
                 </p>
                 <div class="flex items-center gap-2 mt-0.5">
                   <p class="text-xs text-(--text-secondary) truncate">{{ project.path }}</p>
-                  <span v-if="project.pathExists === false"
+                  <span v-if="project.workspaceRecognized === false"
                     class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 font-medium">
-                    Path not reachable
+                    Workspace not recognized
                   </span>
                 </div>
               </div>
@@ -115,7 +115,7 @@
                 title="Remove from list">
                 <i class="ri-close-line text-sm text-(--text-secondary) hover:text-red-500"></i>
               </button>
-              <i v-if="project.pathExists !== false"
+              <i v-if="project.workspaceRecognized !== false"
                 class="ri-arrow-right-s-line text-(--text-secondary) opacity-0 group-hover:opacity-100 transition-opacity"></i>
             </div>
           </div>

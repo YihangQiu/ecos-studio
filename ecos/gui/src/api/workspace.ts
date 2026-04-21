@@ -29,6 +29,17 @@ export interface LoadWorkspaceRequest {
   }
 }
 
+export interface SetPdkRootResponse {
+  cmd: CMDEnum;
+  response: string;
+  data: {
+    pdk: string;
+    pdk_root: string;
+    env_key: string;
+  };
+  message: string[];
+}
+
 export interface CreateWorkspaceRequest {
   cmd: CMDEnum.create_workspace;
   data: {
@@ -40,6 +51,14 @@ export interface CreateWorkspaceRequest {
     origin_verilog: string,
     filelist: string,
     rtl_list: string[]
+  }
+}
+
+export interface SetPdkRootRequest {
+  cmd: CMDEnum.set_pdk_root;
+  data: {
+    pdk: string;
+    pdk_root: string;
   }
 }
 
@@ -87,6 +106,19 @@ export function createWorkspaceApi(
       filelist: options.filelist || ''
     }
   } as CreateWorkspaceRequest)
+}
+
+export function setPdkRootApi(options: {
+  pdk?: string
+  pdk_root?: string
+}) {
+  return alovaInstance.Post<SetPdkRootResponse>('/api/workspace/set_pdk_root', {
+    cmd: CMDEnum.set_pdk_root,
+    data: {
+      pdk: options?.pdk || '',
+      pdk_root: options?.pdk_root || '',
+    },
+  } as SetPdkRootRequest)
 }
 
 /**

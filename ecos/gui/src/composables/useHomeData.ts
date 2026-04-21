@@ -1,13 +1,13 @@
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { readTextFile, readFile, watch as fsWatch, exists } from '@tauri-apps/plugin-fs'
 import { dirname } from '@tauri-apps/api/path'
-import { invoke } from '@tauri-apps/api/core'
 import { useWorkspace } from './useWorkspace'
 import { useTauri } from './useTauri'
 import { flowExecutionActive } from './useFlowRunner'
 import { getHomePageApi } from '@/api/flow'
 import { ResponseEnum } from '@/api/type'
 import type { ECCResponse } from '@/api/sse'
+import { requestProjectPathAccess, resolveProjectPathAccess } from '@/utils/projectFs'
 
 // ============ 类型定义 ============
 
@@ -96,6 +96,8 @@ export const sharedHomeData = ref<HomeData | null>(null)
 let _fetchPromise: Promise<HomeData | null> | null = null
 /** 缓存对应的项目路径（路径变化时自动失效） */
 let _cachedForProject = ''
+/** 递增的失效标记：项目切换/清空后，旧请求必须放弃结果 */
+let _fetchGeneration = 0
 
 /**
  * 获取 home.json 数据（共享 + 去重）
@@ -116,6 +118,7 @@ export async function fetchSharedHomeData(
     sharedHomeData.value = null
     _fetchPromise = null
     _cachedForProject = projectPath
+    _fetchGeneration += 1
   }
 
   // 已有缓存，直接返回
@@ -125,15 +128,16 @@ export async function fetchSharedHomeData(
   if (_fetchPromise) return _fetchPromise
 
   _fetchPromise = (async (): Promise<HomeData | null> => {
+    const generation = _fetchGeneration
+    const isStale = () => generation !== _fetchGeneration || projectPath !== _cachedForProject
+
     try {
       if (!isInTauri || !projectPath) return null
 
       // 请求文件系统权限
-      try {
-        await invoke('request_project_permission', { path: projectPath })
-      } catch (e) {
-        console.warn('Failed to request file access permission:', e)
-      }
+      if (!(await requestProjectPathAccess(projectPath))) return null
+
+      if (isStale()) return null
 
       // 调用 API 获取 home.json 路径
       const apiResponse = await getHomePageApi()
@@ -141,14 +145,18 @@ export async function fetchSharedHomeData(
         console.warn('get_home_page API failed:', apiResponse.message)
         return null
       }
+      if (isStale()) return null
 
       // 读取 home.json
       const localPath = convertRemoteToLocalPath(apiResponse.data.path, projectPath)
-      console.log('Loading home.json from:', localPath)
+      const resolvedHomePath = await resolveProjectPathAccess(localPath)
+      if (!resolvedHomePath) return null
+      console.log('Loading home.json from:', resolvedHomePath)
 
-      const content = await readTextFile(localPath)
+      const content = await readTextFile(resolvedHomePath)
       const data: HomeData = JSON.parse(content)
 
+      if (isStale()) return null
       sharedHomeData.value = data
       console.log('Shared home data loaded:', Object.keys(data))
       return data
@@ -172,7 +180,13 @@ export function updateSharedHomeData(data: HomeData) {
 export function invalidateSharedHomeData() {
   sharedHomeData.value = null
   _fetchPromise = null
+}
+
+export function resetSharedHomeDataProjectState() {
+  sharedHomeData.value = null
+  _fetchPromise = null
   _cachedForProject = ''
+  _fetchGeneration += 1
 }
 
 // ============ Composable ============
@@ -210,19 +224,6 @@ export function useHomeData() {
   // 用于清理 blob URL
   let currentBlobUrl: string | null = null
   let metricsBlobUrls: string[] = []
-
-  /**
-   * 请求文件系统访问权限
-   */
-  async function requestPermission(path: string): Promise<boolean> {
-    try {
-      await invoke('request_project_permission', { path })
-      return true
-    } catch (permError) {
-      console.warn('Failed to request file access permission:', permError)
-      return false
-    }
-  }
 
   /**
    * 将远程路径转换为本地项目路径
@@ -286,9 +287,14 @@ export function useHomeData() {
 
     try {
       const localPath = convertToLocalPath(layoutPath)
-      console.log('Loading layout image from:', localPath)
+      const resolvedPath = await resolveProjectPathAccess(localPath)
+      console.log('Loading layout image from:', resolvedPath ?? localPath)
+      if (!resolvedPath) {
+        cleanupBlobUrl()
+        return
+      }
 
-      const fileData = await readFile(localPath)
+      const fileData = await readFile(resolvedPath)
       const blob = new Blob([fileData], { type: 'image/png' })
       const blobUrl = URL.createObjectURL(blob)
 
@@ -342,7 +348,11 @@ export function useHomeData() {
       entries.map(async ([label, imagePath]) => {
         try {
           const localPath = convertToLocalPath(imagePath as string)
-          const fileData = await readFile(localPath)
+          const resolvedPath = await resolveProjectPathAccess(localPath)
+          if (!resolvedPath) {
+            return { label, blobUrl: '' }
+          }
+          const fileData = await readFile(resolvedPath)
           const blob = new Blob([fileData], { type: 'image/png' })
           const blobUrl = URL.createObjectURL(blob)
           return { label, blobUrl }
@@ -379,9 +389,14 @@ export function useHomeData() {
 
     try {
       const localPath = convertToLocalPath(checklistPath)
-      console.log('Loading checklist from:', localPath)
+      const resolvedPath = await resolveProjectPathAccess(localPath)
+      console.log('Loading checklist from:', resolvedPath ?? localPath)
+      if (!resolvedPath) {
+        checklistItems.value = []
+        return
+      }
 
-      const fileContent = await readTextFile(localPath)
+      const fileContent = await readTextFile(resolvedPath)
       const data: ChecklistData = JSON.parse(fileContent)
 
       checklistItems.value = data.checklist || []
@@ -406,11 +421,14 @@ export function useHomeData() {
   ): Promise<FlowLogSegment[]> {
     const workspaceRoot = workspaceRootFromFlowPath(flowLocal)
     if (!workspaceRoot) return []
+    const resolvedFlowPath = await resolveProjectPathAccess(flowLocal)
+    const resolvedWorkspaceRoot = await resolveProjectPathAccess(workspaceRoot)
+    if (!resolvedFlowPath || !resolvedWorkspaceRoot) return []
 
-    const fileContent = await readTextFile(flowLocal)
+    const fileContent = await readTextFile(resolvedFlowPath)
     const flowData = JSON.parse(fileContent) as { steps?: Array<{ name: string; tool: string; state: string }> }
     const steps = flowData.steps ?? []
-    const root = workspaceRoot.replace(/\\/g, '/')
+    const root = resolvedWorkspaceRoot.replace(/\\/g, '/')
     const out: FlowLogSegment[] = []
 
     const yieldToUi = () =>
@@ -500,7 +518,9 @@ export function useHomeData() {
     const patchLive = async (): Promise<void> => {
       if (sid !== liveSession) return
       try {
-        const t = await readTextFile(logPath)
+        const resolvedLogPath = await resolveProjectPathAccess(logPath)
+        if (!resolvedLogPath) return
+        const t = await readTextFile(resolvedLogPath)
         const i = flowLogSegments.value.findIndex((s) => s.live)
         if (i >= 0) {
           const cur = flowLogSegments.value[i]!
@@ -525,8 +545,10 @@ export function useHomeData() {
       if (sid !== liveSession) return true
       try {
         if (await exists(logPath)) {
+          const resolvedLogPath = await resolveProjectPathAccess(logPath)
+          if (!resolvedLogPath) return false
           try {
-            unwatchLog = await fsWatch(logPath, () => {
+            unwatchLog = await fsWatch(resolvedLogPath, () => {
               void patchLive()
             }, { delayMs: 100 })
           } catch (we) {
@@ -538,8 +560,10 @@ export function useHomeData() {
         }
         const logDir = await dirname(logPath)
         if (await exists(logDir)) {
+          const resolvedLogDir = await resolveProjectPathAccess(logDir)
+          if (!resolvedLogDir) return false
           try {
-            unwatchLog = await fsWatch(logDir, () => {
+            unwatchLog = await fsWatch(resolvedLogDir, () => {
               void patchLive()
             }, { delayMs: 120 })
           } catch (we) {
@@ -621,19 +645,19 @@ export function useHomeData() {
     flowLogLoading.value = true
 
     try {
-      const projectPath = currentProject.value?.path
-      if (projectPath) {
-        await requestPermission(projectPath)
-      }
-
       const flowLocal = convertToLocalPath(flowPathRemote)
-      if (!workspaceRootFromFlowPath(flowLocal)) {
+      const resolvedFlowPath = await resolveProjectPathAccess(flowLocal)
+      if (!resolvedFlowPath) {
+        flowLogSegments.value = []
+        return
+      }
+      if (!workspaceRootFromFlowPath(resolvedFlowPath)) {
         flowLogError.value = 'Cannot resolve workspace root from flow.json path'
         flowLogSegments.value = []
         return
       }
 
-      flowLogSegments.value = await buildFlowLogSegmentsFromFlowLocal(flowLocal, false)
+      flowLogSegments.value = await buildFlowLogSegmentsFromFlowLocal(resolvedFlowPath, false)
       console.log('Flow step logs loaded:', flowLogSegments.value.length, 'segments')
     } catch (err) {
       console.error('Failed to load flow step logs:', err)
@@ -723,15 +747,13 @@ export function useHomeData() {
     try {
       // 转换远程路径为本地路径
       const localPath = convertToLocalPath(homePath)
-      console.log('Loading home data from SSE path:', localPath)
+      const resolvedHomePath = await resolveProjectPathAccess(localPath)
+      console.log('Loading home data from SSE path:', resolvedHomePath ?? localPath)
 
       // 请求文件系统访问权限
-      const projectPath = currentProject.value?.path
-      if (projectPath) {
-        await requestPermission(projectPath)
-      }
+      if (!resolvedHomePath) return
 
-      const fileContent = await readTextFile(localPath)
+      const fileContent = await readTextFile(resolvedHomePath)
       const homeData: HomeData = JSON.parse(fileContent)
 
       // 更新共享缓存，让其他 composable 也能获取最新数据
@@ -771,7 +793,7 @@ export function useHomeData() {
   /**
    * 清空所有数据
    */
-  function clearHomeData(): void {
+  function clearHomeData(resetProjectState = false): void {
     liveSession++
     cleanupFlowLogLiveWatch()
     monitorData.value = null
@@ -783,7 +805,11 @@ export function useHomeData() {
     cleanupBlobUrl()
     cleanupMetricsBlobUrls()
     error.value = null
-    invalidateSharedHomeData()
+    if (resetProjectState) {
+      resetSharedHomeDataProjectState()
+    } else {
+      invalidateSharedHomeData()
+    }
   }
 
   // run_step / rtl2gds 期间：监听 flow.json 与当前步日志文件，渐进更新 Flow step log
@@ -819,13 +845,11 @@ export function useHomeData() {
       }
 
       const flowLocal = convertToLocalPath(flowRemote)
-      const projectPath = currentProject.value.path
-      if (projectPath) {
-        await requestPermission(projectPath)
-      }
+      const resolvedFlowPath = await resolveProjectPathAccess(flowLocal)
+      if (!resolvedFlowPath) return
 
       try {
-        unwatchFlowJson = await fsWatch(flowLocal, () => {
+        unwatchFlowJson = await fsWatch(resolvedFlowPath, () => {
           void refreshFlowLogLivePanel(sid)
         }, { delayMs: 340 })
       } catch (e) {
@@ -838,6 +862,7 @@ export function useHomeData() {
 
       await refreshFlowLogLivePanel(sid)
     },
+    { immediate: true },
   )
 
   // 监听当前项目变化，自动重新加载
@@ -847,7 +872,7 @@ export function useHomeData() {
       if (newPath) {
         await loadHomeData()
       } else {
-        clearHomeData()
+        clearHomeData(true)
       }
     },
     { immediate: true }
@@ -894,13 +919,6 @@ export function useHomeData() {
       }
     }
   )
-
-  // 组件挂载时也尝试加载
-  onMounted(async () => {
-    if (currentProject.value?.path) {
-      await loadHomeData()
-    }
-  })
 
   // 组件卸载时清理 blob URL 并失效共享缓存
   // 确保下次 mount 时从磁盘重新读取最新 home.json

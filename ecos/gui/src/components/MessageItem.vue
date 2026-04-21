@@ -20,6 +20,10 @@
           class="text-[10px] text-(--accent-color) bg-(--accent-color)/10 px-2 py-0.5 rounded-full shrink-0">
           {{ message.mapData.category }}
         </span>
+        <button type="button" class="info-report-header-fs-btn info-report-header-fs-btn--sm shrink-0" title="查阅"
+          aria-label="查阅" @click.stop="openImageLightbox(message.mapData.title, message.mapData.imageUrl)">
+          <i class="ri-fullscreen-fill"></i>
+        </button>
       </div>
 
       <!-- 统计信息 -->
@@ -156,28 +160,6 @@
           </div>
         </div>
       </div>
-
-      <!-- 报告查阅 Lightbox（HTML / JSON / 纯文本；与 HomeView 图表预览一致：暗色遮罩 + 背景模糊） -->
-      <Teleport to="body">
-        <Transition name="lightbox">
-          <div v-if="reportLightbox.visible" class="info-html-lightbox-overlay" tabindex="-1"
-            @click="closeReportLightbox">
-            <div class="info-html-lightbox-content" @click.stop>
-              <div class="info-html-lightbox-header">
-                <span class="info-html-lightbox-title">{{ reportLightbox.title }}</span>
-                <button type="button" class="info-html-lightbox-close" aria-label="关闭" @click="closeReportLightbox">
-                  <i class="ri-close-line"></i>
-                </button>
-              </div>
-              <div class="info-html-lightbox-body">
-                <div v-if="reportLightbox.mode === 'html'" class="info-html-lightbox-inner markdown-body"
-                  v-html="reportLightbox.body"></div>
-                <pre v-else class="info-report-lightbox-pre"><code>{{ reportLightbox.body }}</code></pre>
-              </div>
-            </div>
-          </div>
-        </Transition>
-      </Teleport>
     </div>
 
     <!-- 其他消息类型 -->
@@ -192,10 +174,14 @@
         <p class="text-xs opacity-90">{{ message.image.label }}:</p>
         <p v-if="message.image.description" class="text-xs opacity-90 whitespace-pre-line mb-2">{{
           message.image.description }}</p>
-        <div class="rounded-lg overflow-hidden mb-2 min-w-0 max-w-full">
+        <div class="relative rounded-lg overflow-hidden mb-2 min-w-0 max-w-full group">
           <img :src="message.image.url" :alt="message.image.label"
             class="w-full min-w-0 max-w-full h-auto object-contain max-h-[400px]" loading="lazy"
             @load="handleImageLoad" />
+          <button type="button" class="image-fs-overlay-btn" title="查阅" aria-label="查阅"
+            @click.stop="openImageLightbox(message.image.label || 'Image', message.image.url)">
+            <i class="ri-fullscreen-fill"></i>
+          </button>
         </div>
       </div>
 
@@ -225,6 +211,32 @@
           class="inline-block w-2 h-4 bg-current animate-pulse ml-0.5"></span>
       </div>
     </div>
+
+    <!-- 全屏查阅 Lightbox：HTML / JSON / 纯文本 / 图片（对所有消息类型通用） -->
+    <Teleport to="body">
+      <Transition name="lightbox">
+        <div v-if="reportLightbox.visible" class="info-html-lightbox-overlay" tabindex="-1"
+          @click="closeReportLightbox">
+          <div class="info-html-lightbox-content" @click.stop>
+            <div class="info-html-lightbox-header">
+              <span class="info-html-lightbox-title">{{ reportLightbox.title }}</span>
+              <button type="button" class="info-html-lightbox-close" aria-label="关闭" @click="closeReportLightbox">
+                <i class="ri-close-line"></i>
+              </button>
+            </div>
+            <div class="info-html-lightbox-body"
+              :class="{ 'info-html-lightbox-body--image': reportLightbox.mode === 'image' }">
+              <div v-if="reportLightbox.mode === 'image'" class="info-image-lightbox-wrapper">
+                <img :src="reportLightbox.body" :alt="reportLightbox.title" class="info-image-lightbox-img" />
+              </div>
+              <div v-else-if="reportLightbox.mode === 'html'" class="info-html-lightbox-inner markdown-body"
+                v-html="reportLightbox.body"></div>
+              <pre v-else class="info-report-lightbox-pre"><code>{{ reportLightbox.body }}</code></pre>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -273,7 +285,7 @@ const mapImageLoading = ref(true)
 const reportLightbox = ref<{
   visible: boolean
   title: string
-  mode: 'html' | 'text' | 'json'
+  mode: 'html' | 'text' | 'json' | 'image'
   body: string
 }>({
   visible: false,
@@ -307,6 +319,16 @@ function openReportLightbox(title: string, content: unknown, mode: 'html' | 'tex
 
 function closeReportLightbox() {
   reportLightbox.value.visible = false
+}
+
+function openImageLightbox(title: string, url: string) {
+  if (!url) return
+  reportLightbox.value = {
+    visible: true,
+    title: title || 'Image',
+    mode: 'image',
+    body: url,
+  }
 }
 
 function coerceHtmlString(content: unknown): string {
@@ -649,6 +671,46 @@ function csvRows(content: string): string[][] {
   color: var(--accent-color);
 }
 
+/* Map 标题栏更紧凑的尺寸 */
+.info-report-header-fs-btn--sm {
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  border-radius: 5px;
+}
+
+/* 图片消息：右上角浮动全屏按钮 */
+.image-fs-overlay-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+  backdrop-filter: blur(4px);
+}
+
+.group:hover .image-fs-overlay-btn,
+.image-fs-overlay-btn:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.image-fs-overlay-btn:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
 /* HTML 报告查阅 Lightbox（与 HomeView 图表预览一致） */
 .info-html-lightbox-overlay {
   position: fixed;
@@ -719,6 +781,37 @@ function csvRows(content: string): string[][] {
   padding: 12px;
   background: var(--bg-primary);
   overflow: auto;
+}
+
+/* 图片模式：居中展示，背景更暗 */
+.info-html-lightbox-body--image {
+  padding: 0;
+  background: #0b0b0f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.info-image-lightbox-wrapper {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.info-image-lightbox-img {
+  /* 显式以视口单位限制尺寸，避免依赖父级 height:100%（父级仅有 max-height 时会失效） */
+  max-width: min(96vw, 1720px);
+  max-height: min(calc(92vh - 52px), 900px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .info-html-lightbox-inner {

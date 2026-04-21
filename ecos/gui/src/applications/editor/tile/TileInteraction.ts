@@ -342,6 +342,62 @@ export class TileInteraction {
       }
       return
     }
+
+    // R → 原地旋转选中 instance（绕 bbox 中心，90° 步进，带 undo）
+    if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      this._rotateSelectedInstance()
+      // 无论是否可旋转都 preventDefault，避免浏览器触发刷新快捷键等
+      if (this._currentSelection?.type === 'instance') e.preventDefault()
+      return
+    }
+  }
+
+  /** 选中 instance 时的原地 90° 旋转（供 keydown + 外部 action 复用） */
+  rotateSelectedInstance(): boolean {
+    return this._rotateSelectedInstance()
+  }
+
+  private _rotateSelectedInstance(): boolean {
+    if (!this._editManager) return false
+    const sel = this._currentSelection
+    if (!sel || sel.type !== 'instance') return false
+    if (sel.instanceId == null || sel.cellId == null
+      || sel.originX == null || sel.originY == null
+    ) return false
+
+    const oldOrient = sel.orient ?? 0
+    const newOrient = rotate90(oldOrient)
+    const savedLayerName = sel.layerName
+
+    const newInst = this._editManager.rotateInstance(
+      sel.instanceId, sel.cellId,
+      sel.originX, sel.originY,
+      oldOrient, newOrient,
+    )
+    if (!newInst) return false
+
+    const def = this.cellStore.getCellDef(newInst.cellId)
+    const bbox = def
+      ? computeInstanceWorldBbox(newInst.originX, newInst.originY, def.bboxW, def.bboxH, newInst.orient)
+      : { x: newInst.originX, y: newInst.originY, w: 0, h: 0 }
+
+    this._currentSelection = {
+      type:       'instance',
+      cellId:     newInst.cellId,
+      instanceId: newInst.instanceId,
+      originX:    newInst.originX,
+      originY:    newInst.originY,
+      orient:     newInst.orient,
+      bboxX:      bbox.x,
+      bboxY:      bbox.y,
+      bboxW:      bbox.w,
+      bboxH:      bbox.h,
+      layerName:  savedLayerName,
+    }
+    this._drawSelection(this._currentSelection)
+    this.highlightOverlay.clear()
+    this._notifySelection(this._currentSelection)
+    return true
   }
 
   // ─── Tile/Global 索引监听 ─────────────────────────────────────────────────
@@ -865,6 +921,18 @@ export class TileInteraction {
 }
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
+
+/** orient 90° 步进旋转循环（与 PlacementTool 的 R 键保持一致） */
+const ROT_CYCLE = [0, 2, 1, 3] as const        // N → E → S → W
+const FLIP_ROT_CYCLE = [4, 6, 5, 7] as const   // Flipped N → E → S → W
+
+function rotate90(orient: number): number {
+  const ri = ROT_CYCLE.indexOf(orient as 0 | 1 | 2 | 3)
+  if (ri >= 0) return ROT_CYCLE[(ri + 1) % ROT_CYCLE.length]
+  const fi = FLIP_ROT_CYCLE.indexOf(orient as 4 | 5 | 6 | 7)
+  if (fi >= 0) return FLIP_ROT_CYCLE[(fi + 1) % FLIP_ROT_CYCLE.length]
+  return ROT_CYCLE[1]
+}
 
 export function computeInstanceWorldBbox(
   originX: number, originY: number,

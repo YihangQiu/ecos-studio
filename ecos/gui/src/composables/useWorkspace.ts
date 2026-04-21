@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 import { LazyStore } from '@tauri-apps/plugin-store'
-import { exists, readTextFile } from '@tauri-apps/plugin-fs'
+import { readTextFile } from '@tauri-apps/plugin-fs'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useToast } from 'primevue/usetoast'
 import { loadWorkspaceApi, createWorkspaceApi, waitForApiReady } from '../api'
@@ -152,23 +152,41 @@ export function useWorkspace() {
   }
 
   /**
-   * 检查项目路径是否仍然有效（文件夹是否存在）
+   * 检查路径是否仍然指向一个可识别的 ECOS 项目目录
    */
   const isProjectValid = async (path: string): Promise<boolean> => {
     try {
-      return await exists(path)
+      return await invoke<boolean>('is_project_directory', { path })
     } catch (error) {
       console.error(`Failed to check path existence: ${path}`, error)
       return false
     }
   }
 
-  /** 
-   * loadRecentProjects 从本地加载最近项目，并异步标记路径可达性。
+  const registerProjectRoot = async (path: string): Promise<boolean> => {
+    try {
+      await invoke('register_project_root', { path })
+      return true
+    } catch (error) {
+      console.error('Failed to register project root permission:', error)
+      return false
+    }
+  }
+
+  const clearProjectRoot = async (): Promise<void> => {
+    try {
+      await invoke('clear_project_root')
+    } catch (error) {
+      console.error('Failed to clear project root permission:', error)
+    }
+  }
+
+  /**
+   * loadRecentProjects 从本地加载最近项目，并异步标记 workspace 识别状态。
    * 
    * 设计原则：
    * - **不自动删除**任何记录（避免因权限/网络等临时问题导致误删）
-   * - 通过 `project.pathExists` 标记当前路径是否可达，供 UI 做差异化展示
+   * - 通过 `project.workspaceRecognized` 标记当前路径是否仍像一个 ECOS workspace，供 UI 做差异化展示
    * - 用户可通过 `removeRecentProject()` 手动移除不需要的条目
    */
   const loadRecentProjects = async () => {
@@ -178,19 +196,13 @@ export function useWorkspace() {
         return
       }
 
-      // 1. 先反序列化并立即展示（pathExists 初始为 undefined，表示检测中）
+      // 1. 先反序列化并立即展示（workspaceRecognized 初始为 undefined，表示检测中）
       const projects = savedProjects.map(deserializeProject)
       recentProjects.value = projects
 
-      // 2. 异步并行检测路径有效性（不阻塞 UI 首屏渲染）
+      // 2. 异步并行检测 workspace 识别状态（不阻塞 UI 首屏渲染）
       const checks = projects.map(async (project) => {
-        // 请求 Rust 端授予访问权限（必须在 exists 之前）
-        try {
-          await invoke('request_project_permission', { path: project.path })
-        } catch {
-          // 权限请求失败不影响后续检测
-        }
-        project.pathExists = await isProjectValid(project.path)
+        project.workspaceRecognized = await isProjectValid(project.path)
       })
       await Promise.all(checks)
 
@@ -205,13 +217,13 @@ export function useWorkspace() {
         if (savedCurrentPath) {
           // 精确匹配上次打开的项目
           restored = projects.find(
-            p => normalizePath(p.path) === savedCurrentPath && p.pathExists !== false
+            p => normalizePath(p.path) === savedCurrentPath && p.workspaceRecognized !== false
           )
         }
 
         // 如果精确匹配失败，回退到第一个有效项目
         if (!restored) {
-          restored = projects.find(p => p.pathExists !== false)
+          restored = projects.find(p => p.workspaceRecognized !== false)
         }
 
         if (restored) {
@@ -219,14 +231,20 @@ export function useWorkspace() {
           await router.isReady()
 
           if (router.currentRoute.value.path.startsWith('/workspace')) {
-            currentProject.value = restored
-            await updateWindowTitle(restored.name)
-
             // reload 后需要重新通过 API 加载 workspace 状态并建立 SSE 连接
             try {
               if (!(await ensureApiReady())) return
               const response = await loadWorkspaceApi(restored.path)
               if (response.response === 'success') {
+                const resolvedPath = normalizePath(response.data.directory || restored.path)
+                if (!(await registerProjectRoot(resolvedPath))) {
+                  return
+                }
+                currentProject.value = {
+                  ...restored,
+                  path: resolvedPath
+                }
+                await updateWindowTitle(restored.name)
                 const workspaceId = response.data.workspace_id || response.data.directory
                 connectSSE(workspaceId)
               }
@@ -302,20 +320,20 @@ export function useWorkspace() {
         selectedPath = result as string
       }
 
-      // 2. 请求 Rust 端动态授予该路径的访问权限（用于本地文件操作）
-      try {
-        await invoke('request_project_permission', { path: selectedPath })
-      } catch (permError) {
-        console.error('Failed to request access permission:', permError)
-        // 权限请求失败不阻止继续，API 服务端有独立的文件访问权限
-      }
-
       if (!(await ensureApiReady())) return false
 
       // 3. 通过 HTTP API 加载项目状态
       const response = await loadWorkspaceApi(selectedPath)
       if (response.response === 'success') {
         const resolvedPath = normalizePath(response.data.directory || selectedPath)
+        if (!(await registerProjectRoot(resolvedPath))) {
+          showToast({
+            severity: 'error',
+            summary: 'Permission Setup Failed',
+            detail: 'The project directory could not be registered for local file access.'
+          })
+          return false
+        }
         const existingProject = recentProjects.value.find(
           p => normalizePath(p.path) === resolvedPath
         )
@@ -385,14 +403,6 @@ export function useWorkspace() {
         selectedPath = result as string
       }
 
-      // 2. 请求 Rust 端动态授予该路径的访问权限（用于本地文件操作）
-      try {
-        await invoke('request_project_permission', { path: selectedPath })
-      } catch (permError) {
-        console.error('Failed to request access permission:', permError)
-        // 权限请求失败不阻止继续，API 服务端有独立的文件访问权限
-      }
-
       if (!(await ensureApiReady())) return false
 
       // 3. 通过 HTTP API 创建项目（传递更多配置信息）
@@ -416,10 +426,20 @@ export function useWorkspace() {
         'Max fanout': frontendParams.max_fanout || 20
       }
 
+      // 注意：新建工程流程不再前置调用 set_pdk_root。
+      // - chipcompiler.create_workspace 本身就接收 pdk_root 参数，会把它持久化到工程里；
+      // - set_pdk_root 的另一项副作用是把 CHIPCOMPILER_<PDK>_PDK_ROOT 写入 os.environ，
+      //   但在"新建工程"这一步它还没有 workspace 可替换，仅剩写环境变量这件事，
+      //   而这个兜底更适合放到后端 create_workspace 成功分支里做；
+      // - 后端 set_pdk_root 目前硬编码白名单仅接受 ics55，会把 sky130 / 自定义 PDK 的新建流程直接拦死。
+      // 因此这里把 pdk_root 原样透传给 create_workspace 即可，set_pdk_root 留给
+      // "已有 workspace 时后置改路径" 的场景使用。
+      const resolvedPdkRoot = config?.pdk_root || ''
+
       const response = await createWorkspaceApi({
         directory: selectedPath,
         pdk: pdkName,
-        pdk_root: config?.pdk_root || '',
+        pdk_root: resolvedPdkRoot,
         parameters: backendParameters,
         origin_def: config?.origin_def,
         origin_verilog: config?.origin_verilog,
@@ -427,10 +447,19 @@ export function useWorkspace() {
       })
       console.log(response)
       if (response.response === 'success') {
+        const resolvedPath = normalizePath(response.data.directory)
+        if (!(await registerProjectRoot(resolvedPath))) {
+          showToast({
+            severity: 'error',
+            summary: 'Permission Setup Failed',
+            detail: 'The project directory could not be registered for local file access.'
+          })
+          return false
+        }
         const createdProject: Project = {
-          id: response.data.directory,
+          id: resolvedPath,
           name: backendParameters['Design'] as string,
-          path: response.data.directory,
+          path: resolvedPath,
           lastOpened: new Date()
         }
 
@@ -564,6 +593,7 @@ export function useWorkspace() {
 
     currentProject.value = null
     disconnectSSE()
+    await clearProjectRoot()
     await store.delete('current_project_path')
     await store.save()
     await updateWindowTitle()

@@ -26,6 +26,7 @@ import {
 } from '@/composables/useLayoutTileGen'
 import { parseDrcStepJson, violationToFitRect } from '@/composables/drcStepParser'
 import { readTextFile } from '@tauri-apps/plugin-fs'
+import { requestProjectPathAccess } from '@/utils/projectFs'
 import { runLayoutTileGenerationSingleFlight } from '@/composables/layoutTilePipeline'
 import { useLayoutTilePrefetchStore } from '@/stores/layoutTilePrefetchStore'
 import { getInfoApi } from '@/api/flow'
@@ -151,7 +152,10 @@ const hotkeyCApplicable = computed(() =>
   && layoutState.tileSelection.value.cellId != null,
 )
 
-const hotkeyRApplicable = computed(() => layoutState.isPlacementMode.value)
+const hotkeyRApplicable = computed(() =>
+  layoutState.isPlacementMode.value
+  || layoutState.tileSelection.value?.type === 'instance',
+)
 
 const hotkeyFitApplicable = computed(() => layoutState.tileSelection.value != null)
 
@@ -306,6 +310,7 @@ async function loadDrcViolationOverlayAfterTiles(_ed: Editor, dieWorldH: number)
 
   try {
     const abs = await resolveLayoutJsonAbsolutePath(projectPath, drcRel)
+    if (!(await requestProjectPathAccess(abs))) return
     const text = await readTextFile(abs)
     const raw = JSON.parse(text) as unknown
     const violations = parseDrcStepJson(raw, dieWorldH)
@@ -795,7 +800,7 @@ onUnmounted(() => {
             type="button"
             class="rounded border border-(--border-color) bg-(--bg-secondary) px-1.5 py-0.5 font-mono text-[10px] leading-tight text-(--text-primary) hover:bg-(--bg-hover) disabled:cursor-not-allowed disabled:opacity-40 sm:text-[11px]"
             :disabled="!hotkeyRApplicable"
-            title="放置模式：旋转 cell 朝向（90° 步进）"
+            title="旋转（R）：选中 instance 原地旋转 / 放置模式切换朝向"
             @click="dispatchRotateKey"
           >
             R

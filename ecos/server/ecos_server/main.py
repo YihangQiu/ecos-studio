@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -39,4 +41,4 @@ async def root():
 @app.get("/health")
 async def health():
     """Global health check"""
-    return {"status": "ok"}
+    return {"status": "ok", "instance_token": os.environ.get("ECOS_SERVER_INSTANCE_TOKEN")}

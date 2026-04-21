@@ -13,11 +13,14 @@ export {
 export {
   loadWorkspaceApi,
   createWorkspaceApi,
+  setPdkRootApi,
   checkProjectApiHealth,
   type ProjectInfo,
   type WorkspaceResponse,
+  type SetPdkRootResponse,
   type LoadWorkspaceRequest,
-  type CreateWorkspaceRequest
+  type CreateWorkspaceRequest,
+  type SetPdkRootRequest
 } from './workspace'
 
 

@@ -1,11 +1,11 @@
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { readTextFile } from '@tauri-apps/plugin-fs'
-import { invoke } from '@tauri-apps/api/core'
 import { useWorkspace } from './useWorkspace'
 import { useTauri, isTauri } from './useTauri'
 import { fetchSharedHomeData, convertRemoteToLocalPath } from './useHomeData'
 import { STEP_METADATA, getStepMetadata } from '@/api/type'
 import type { ECCResponse } from '@/api/sse'
+import { resolveProjectPathAccess } from '@/utils/projectFs'
 
 // ============ 类型定义 ============
 
@@ -80,13 +80,16 @@ export async function loadFlowRunStepKeysFromProject(projectPath: string): Promi
     return fallbackRunStepKeys()
   }
   try {
-    await invoke('request_project_permission', { path: projectPath })
     const homeData = await fetchSharedHomeData(projectPath, true)
     if (!homeData?.flow) {
       return fallbackRunStepKeys()
     }
     const localFlowPath = convertRemoteToLocalPath(homeData.flow, projectPath)
-    const fileContent = await readTextFile(localFlowPath)
+    const resolvedFlowPath = await resolveProjectPathAccess(localFlowPath)
+    if (!resolvedFlowPath) {
+      return fallbackRunStepKeys()
+    }
+    const fileContent = await readTextFile(resolvedFlowPath)
     const flowData: FlowData = JSON.parse(fileContent)
     const stages = transformFlowData(flowData)
     return stages.map((s) => s.path)
@@ -123,19 +126,6 @@ export function useFlowStages() {
   })
 
   /**
-   * 请求文件系统访问权限
-   */
-  async function requestPermission(path: string): Promise<boolean> {
-    try {
-      await invoke('request_project_permission', { path })
-      return true
-    } catch (permError) {
-      console.warn('Failed to request file access permission:', permError)
-      return false
-    }
-  }
-
-  /**
    * 将远程路径转换为本地项目路径
    */
   function convertToLocalPath(remotePath: string): string {
@@ -157,14 +147,11 @@ export function useFlowStages() {
 
     try {
       const localPath = convertToLocalPath(flowJsonPath)
-      console.log('Loading flow.json from path:', localPath)
+      const resolvedPath = await resolveProjectPathAccess(localPath)
+      console.log('Loading flow.json from path:', resolvedPath ?? localPath)
+      if (!resolvedPath) return
 
-      const projectPath = currentProject.value?.path
-      if (projectPath) {
-        await requestPermission(projectPath)
-      }
-
-      const fileContent = await readTextFile(localPath)
+      const fileContent = await readTextFile(resolvedPath)
       const flowData: FlowData = JSON.parse(fileContent)
 
       console.log('Loaded flow data from path:', flowData)
@@ -189,10 +176,10 @@ export function useFlowStages() {
 
     try {
       const localHomePath = convertToLocalPath(homePath)
-      const projectPath = currentProject.value?.path
-      if (projectPath) await requestPermission(projectPath)
+      const resolvedHomePath = await resolveProjectPathAccess(localHomePath)
+      if (!resolvedHomePath) return
 
-      const homeContent = await readTextFile(localHomePath)
+      const homeContent = await readTextFile(resolvedHomePath)
       const homeData = JSON.parse(homeContent)
       const flowPath = homeData.flow
       if (flowPath) {
@@ -238,9 +225,13 @@ export function useFlowStages() {
       console.log('Got flow.json path from home.json:', flowJsonPath)
 
       // 读取 flow.json
-      await requestPermission(projectPath)
       const localFlowPath = convertToLocalPath(flowJsonPath)
-      const flowContent = await readTextFile(localFlowPath)
+      const resolvedFlowPath = await resolveProjectPathAccess(localFlowPath)
+      if (!resolvedFlowPath) {
+        dynamicFlowStages.value = []
+        return
+      }
+      const flowContent = await readTextFile(resolvedFlowPath)
       const flowData: FlowData = JSON.parse(flowContent)
 
       console.log('Loaded flow data:', flowData)
@@ -365,13 +356,6 @@ export function useFlowStages() {
       }
     }
   )
-
-  // 组件挂载时也尝试加载
-  onMounted(async () => {
-    if (currentProject.value?.path) {
-      await loadFlowStages()
-    }
-  })
 
   return {
     // 状态

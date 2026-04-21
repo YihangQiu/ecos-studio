@@ -232,6 +232,7 @@
 import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { Message } from '../types'
+import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
 const props = defineProps<{
   message: Message
@@ -242,13 +243,23 @@ const emit = defineEmits<{
 }>()
 
 const md = new MarkdownIt({
-  html: true,
+  html: false,
   linkify: true,
   typographer: true
 })
 
+const defaultLinkOpen =
+  md.renderer.rules.link_open ??
+  ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options))
+
+md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx]?.attrSet('target', '_blank')
+  tokens[idx]?.attrSet('rel', 'noopener noreferrer')
+  return defaultLinkOpen(tokens, idx, options, env, self)
+}
+
 const renderedContent = computed(() => {
-  return md.render(props.message.content)
+  return sanitizeHtml(md.render(props.message.content))
 })
 
 const handleImageLoad = () => {
@@ -284,7 +295,8 @@ function formatJsonForLightbox(content: unknown): string {
 }
 
 function openReportLightbox(title: string, content: unknown, mode: 'html' | 'text' | 'json') {
-  const body = mode === 'json' ? formatJsonForLightbox(content) : coerceReportBody(content)
+  const rawBody = mode === 'json' ? formatJsonForLightbox(content) : coerceReportBody(content)
+  const body = mode === 'html' ? sanitizeHtml(rawBody) : rawBody
   reportLightbox.value = {
     visible: true,
     title: title || 'Report',
@@ -298,7 +310,7 @@ function closeReportLightbox() {
 }
 
 function coerceHtmlString(content: unknown): string {
-  return coerceReportBody(content)
+  return sanitizeHtml(coerceReportBody(content))
 }
 
 /** 标题栏全屏按钮：存在 HTML / JSON / 纯文本等可全屏内容时显示 */

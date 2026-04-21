@@ -203,7 +203,10 @@ fn parse_source_data(
             if ctype != Some("box") {
                 continue;
             }
-            let layer = child.get("layer").and_then(|v| v.as_i64()).ok_or("box layer")?;
+            let layer = child
+                .get("layer")
+                .and_then(|v| v.as_i64())
+                .ok_or("box layer")?;
             let layer_idx = match rt.gds_id_to_idx.get(&layer) {
                 Some(&i) => i,
                 None => continue,
@@ -315,7 +318,8 @@ fn extract_hierarchy(raw_insts: Vec<RawInst>) -> (HashMap<u32, CellDef>, Vec<Cel
             })
             .collect();
         sorted.sort_by(|a, b| {
-            a.layer_idx.cmp(&b.layer_idx)
+            a.layer_idx
+                .cmp(&b.layer_idx)
                 .then(a.lx.cmp(&b.lx))
                 .then(a.ly.cmp(&b.ly))
                 .then(a.lw.cmp(&b.lw))
@@ -524,7 +528,11 @@ fn render_raster_tile(
             let Some(def) = cell_defs.get(&inst.cell_id) else {
                 continue;
             };
-            let Some(ld) = def.layers.iter().find(|l| l.layer_idx as usize == layer_idx) else {
+            let Some(ld) = def
+                .layers
+                .iter()
+                .find(|l| l.layer_idx as usize == layer_idx)
+            else {
                 continue;
             };
             let rects = &ld.packed;
@@ -543,18 +551,10 @@ fn render_raster_tile(
                 } else {
                     let o = ri * 16;
                     (
-                        i32::from_le_bytes([
-                            rects[o],
-                            rects[o + 1],
-                            rects[o + 2],
-                            rects[o + 3],
-                        ]) as f64,
-                        i32::from_le_bytes([
-                            rects[o + 4],
-                            rects[o + 5],
-                            rects[o + 6],
-                            rects[o + 7],
-                        ]) as f64,
+                        i32::from_le_bytes([rects[o], rects[o + 1], rects[o + 2], rects[o + 3]])
+                            as f64,
+                        i32::from_le_bytes([rects[o + 4], rects[o + 5], rects[o + 6], rects[o + 7]])
+                            as f64,
                         i32::from_le_bytes([
                             rects[o + 8],
                             rects[o + 9],
@@ -593,17 +593,20 @@ fn render_raster_tile(
                         let out_a = sa + dst_a * (1.0 - sa);
                         if out_a > 0.0 {
                             let inv_out_a = 1.0 / out_a;
-                            pixels[idx] = ((sr * sa + pixels[idx] as f64 * dst_a * (1.0 - sa)) * inv_out_a)
-                                .round()
-                                .clamp(0.0, 255.0) as u8;
-                            pixels[idx + 1] = ((sg * sa + pixels[idx + 1] as f64 * dst_a * (1.0 - sa))
+                            pixels[idx] = ((sr * sa + pixels[idx] as f64 * dst_a * (1.0 - sa))
                                 * inv_out_a)
                                 .round()
                                 .clamp(0.0, 255.0) as u8;
-                            pixels[idx + 2] = ((sb * sa + pixels[idx + 2] as f64 * dst_a * (1.0 - sa))
-                                * inv_out_a)
-                                .round()
-                                .clamp(0.0, 255.0) as u8;
+                            pixels[idx + 1] =
+                                ((sg * sa + pixels[idx + 1] as f64 * dst_a * (1.0 - sa))
+                                    * inv_out_a)
+                                    .round()
+                                    .clamp(0.0, 255.0) as u8;
+                            pixels[idx + 2] =
+                                ((sb * sa + pixels[idx + 2] as f64 * dst_a * (1.0 - sa))
+                                    * inv_out_a)
+                                    .round()
+                                    .clamp(0.0, 255.0) as u8;
                             pixels[idx + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
                         }
                     }
@@ -642,8 +645,8 @@ fn sha256_tag(data: &[u8]) -> String {
 
 /// 从布局 JSON 生成完整瓦片目录。
 pub fn generate(layout_json_path: &Path, out_dir: &Path) -> Result<(), String> {
-    let raw = std::fs::read_to_string(layout_json_path)
-        .map_err(|e| format!("read layout: {}", e))?;
+    let raw =
+        std::fs::read_to_string(layout_json_path).map_err(|e| format!("read layout: {}", e))?;
     let merged: Value = serde_json::from_str(&raw).map_err(|e| format!("parse JSON: {}", e))?;
 
     let die_pts = merged
@@ -767,10 +770,7 @@ pub fn generate(layout_json_path: &Path, out_dir: &Path) -> Result<(), String> {
         .enumerate()
         .map(|(idx, (orig_id, _))| {
             let s = &rt.by_idx[idx];
-            let hex = format!(
-                "#{:02x}{:02x}{:02x}",
-                s.rgb[0], s.rgb[1], s.rgb[2]
-            );
+            let hex = format!("#{:02x}{:02x}{:02x}", s.rgb[0], s.rgb[1], s.rgb[2]);
             json!({
                 "id": idx,
                 "name": s.name,
@@ -849,20 +849,27 @@ pub fn generate(layout_json_path: &Path, out_dir: &Path) -> Result<(), String> {
                         tile_world_size,
                         &rt,
                     );
-                    let png = encode_png_rgba(&pixels, TILE_PIXEL_SIZE as usize, TILE_PIXEL_SIZE as usize)?;
-                    std::fs::write(raster_dir.join(format!("{}.png", ty)), png).map_err(|e| e.to_string())?;
+                    let png = encode_png_rgba(
+                        &pixels,
+                        TILE_PIXEL_SIZE as usize,
+                        TILE_PIXEL_SIZE as usize,
+                    )?;
+                    std::fs::write(raster_dir.join(format!("{}.png", ty)), png)
+                        .map_err(|e| e.to_string())?;
 
                     if has_vector_content {
                         let vec_dir = out_dir.join(format!("tiles/vector/{}/{}", z, tx));
                         std::fs::create_dir_all(&vec_dir).map_err(|e| e.to_string())?;
                         let bin = build_vector_tile(&visible);
-                        std::fs::write(vec_dir.join(format!("{}.bin", ty)), bin).map_err(|e| e.to_string())?;
+                        std::fs::write(vec_dir.join(format!("{}.bin", ty)), bin)
+                            .map_err(|e| e.to_string())?;
                     }
                 } else {
                     let vec_dir = out_dir.join(format!("tiles/vector/{}/{}", z, tx));
                     std::fs::create_dir_all(&vec_dir).map_err(|e| e.to_string())?;
                     let bin = build_vector_tile(&visible);
-                    std::fs::write(vec_dir.join(format!("{}.bin", ty)), bin).map_err(|e| e.to_string())?;
+                    std::fs::write(vec_dir.join(format!("{}.bin", ty)), bin)
+                        .map_err(|e| e.to_string())?;
                 }
             }
         }

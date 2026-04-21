@@ -55,7 +55,7 @@
       <section class="section-card monitor-area">
         <div class="section-header">
           <div class="header-icon monitor"><i class="ri-pulse-line"></i></div>
-          <h2>Runtime monitoring</h2>
+          <h2>Runtime Monitoring</h2>
         </div>
         <div class="monitor-content" v-if="monitorData">
           <div v-for="cfg in chartConfigs" :key="cfg.key" class="monitor-row">
@@ -92,7 +92,9 @@
           @mousemove="onLayoutMouseMove" @mouseup="onLayoutMouseUp" @mouseleave="onLayoutMouseUp">
           <img v-if="layoutBlobUrl" :src="layoutBlobUrl" alt="Layout Preview" class="layout-image"
             :style="layoutImageTransform" draggable="false" />
-          <div v-else class="layout-placeholder">
+          <!-- 科技感扫描线 -->
+          <div v-if="layoutBlobUrl && !isLayoutFullscreen" class="scanner-line"></div>
+          <div v-else-if="!layoutBlobUrl" class="layout-placeholder">
             <i class="ri-image-2-line"></i>
             <p>Layout Preview</p>
             <span>Waiting for layout data...</span>
@@ -138,7 +140,7 @@
       <section class="section-card gds-area">
         <div class="section-header">
           <div class="header-icon gds"><i class="ri-terminal-line"></i></div>
-          <h2>Flow step log</h2>
+          <h2>Flow Step Log</h2>
           <span v-if="flowLogStepName" class="header-badge">{{ flowLogStepName }}</span>
         </div>
         <div class="flow-log-content">
@@ -876,8 +878,10 @@ function stateClass(state: string): string {
 .layout-area.is-fullscreen .layout-content {
   margin: 0;
   border-radius: 0;
+  border: none;
   overflow: hidden;
   position: relative;
+  background-image: none;
 }
 
 .layout-area.is-fullscreen .layout-image {
@@ -919,13 +923,36 @@ function stateClass(state: string): string {
 /* ==================== Section Card 通用样式 ==================== */
 .section-card {
   background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--accent-rgb, 59, 130, 246), 0.2);
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
   min-height: 0;
+  position: relative;
+  box-shadow: inset 0 0 20px rgba(var(--accent-rgb, 59, 130, 246), 0.02);
+}
+
+/* HUD 瞄准框角标 */
+.section-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to right, var(--accent-color) 2px, transparent 2px) 0 0,
+    linear-gradient(to bottom, var(--accent-color) 2px, transparent 2px) 0 0,
+    linear-gradient(to left, var(--accent-color) 2px, transparent 2px) 100% 0,
+    linear-gradient(to bottom, var(--accent-color) 2px, transparent 2px) 100% 0,
+    linear-gradient(to right, var(--accent-color) 2px, transparent 2px) 0 100%,
+    linear-gradient(to top, var(--accent-color) 2px, transparent 2px) 0 100%,
+    linear-gradient(to left, var(--accent-color) 2px, transparent 2px) 100% 100%,
+    linear-gradient(to top, var(--accent-color) 2px, transparent 2px) 100% 100%;
+  background-repeat: no-repeat;
+  background-size: 8px 8px;
+  opacity: 0.6;
+  z-index: 10;
 }
 
 /* Section Header */
@@ -933,47 +960,39 @@ function stateClass(state: string): string {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: linear-gradient(135deg, var(--bg-sidebar) 0%, var(--bg-secondary) 100%);
+  padding: 12px 16px;
+  background: transparent;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 
 .header-icon {
-  width: 24px;
-  height: 24px;
-  background: linear-gradient(135deg, var(--accent-color) 0%, #06b6d4 100%);
-  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 16px;
   flex-shrink: 0;
 }
 
 .section-header h2 {
   flex: 1;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-primary);
   margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .header-badge {
-  padding: 2px 7px;
-  background: linear-gradient(135deg, var(--accent-color) 0%, #06b6d4 100%);
-  color: white;
-  font-size: 9px;
-  font-weight: 700;
+  padding: 2px 8px;
+  background: rgba(var(--accent-rgb, 59, 130, 246), 0.1);
+  color: var(--accent-color);
+  font-size: 11px;
+  font-weight: 600;
   border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   flex-shrink: 0;
 }
 
@@ -985,10 +1004,10 @@ function stateClass(state: string): string {
 }
 
 .header-count {
-  padding: 2px 7px;
-  background: var(--bg-primary);
+  padding: 2px 8px;
+  background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   border-radius: 4px;
   border: 1px solid var(--border-color);
@@ -1060,18 +1079,29 @@ function stateClass(state: string): string {
 }
 
 .info-value {
-  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+html.dark .info-value {
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
 }
 
 .info-value.highlight {
   color: var(--accent-color);
+  text-shadow: 0 0 10px rgba(var(--accent-rgb, 59, 130, 246), 0.4);
+}
+
+html.dark .info-value.highlight {
+  text-shadow: 0 0 12px rgba(var(--accent-rgb, 59, 130, 246), 0.8);
 }
 
 .info-value.mono {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .info-value small {
@@ -1129,11 +1159,15 @@ function stateClass(state: string): string {
 .monitor-value {
   min-width: 80px;
   text-align: right;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text-primary);
   font-family: 'JetBrains Mono', monospace;
   flex-shrink: 0;
+}
+
+html.dark .monitor-value {
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
 }
 
 .monitor-placeholder {
@@ -1174,10 +1208,38 @@ function stateClass(state: string): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-primary);
+  background-color: var(--bg-primary);
+  background-image:
+    linear-gradient(rgba(var(--accent-rgb, 59, 130, 246), 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--accent-rgb, 59, 130, 246), 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: center center;
   margin: 8px;
-  border-radius: 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(var(--accent-rgb, 59, 130, 246), 0.15);
   overflow: hidden;
+  position: relative;
+}
+
+.scanner-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-color);
+  box-shadow: 0 0 15px 3px rgba(var(--accent-rgb, 59, 130, 246), 0.4), 0 0 30px 6px rgba(var(--accent-rgb, 59, 130, 246), 0.2);
+  opacity: 0.8;
+  animation: scan-animation 3.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  pointer-events: none;
+  z-index: 5;
+}
+
+@keyframes scan-animation {
+  0% { top: -10px; opacity: 0; }
+  10% { opacity: 0.8; }
+  90% { opacity: 0.8; }
+  100% { top: 100%; opacity: 0; }
 }
 
 .layout-placeholder {
@@ -1252,20 +1314,26 @@ function stateClass(state: string): string {
 .chart-card {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 6px;
-  transition: border-color 0.15s ease;
+  gap: 8px;
+  padding: 8px;
+  transition: all 0.2s ease;
   cursor: pointer;
   overflow: hidden;
 }
 
 .chart-card:hover {
   border-color: var(--accent-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  transform: translateY(-2px);
+}
+
+html.dark .chart-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .chart-visual {
@@ -1277,6 +1345,13 @@ function stateClass(state: string): string {
   min-height: 0;
   font-size: 28px;
   color: var(--text-secondary);
+  background-color: #ffffff;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 4px;
+}
+
+.chart-visual i {
   opacity: 0.25;
 }
 
@@ -1285,13 +1360,12 @@ function stateClass(state: string): string {
   height: 100%;
   object-fit: contain;
   display: block;
-  opacity: 1;
 }
 
 .chart-label {
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
   text-align: center;
   white-space: nowrap;
   flex-shrink: 0;
@@ -1400,8 +1474,8 @@ function stateClass(state: string): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
-  background: var(--bg-primary);
+  padding: 24px;
+  background: #ffffff;
 }
 
 .chart-lightbox-body img {
@@ -1498,13 +1572,29 @@ function stateClass(state: string): string {
 }
 
 .flow-log-step.is-live .flow-log-pre {
-  border-color: rgba(59, 130, 246, 0.4);
-  box-shadow: inset 3px 0 0 0 rgba(59, 130, 246, 0.65);
+  border-color: rgba(var(--accent-rgb, 59, 130, 246), 0.4);
+  box-shadow: inset 3px 0 0 0 var(--accent-color), 0 0 10px rgba(var(--accent-rgb, 59, 130, 246), 0.1);
+}
+
+.flow-log-step.is-live .flow-log-pre::after {
+  content: '█';
+  animation: terminal-blink 1s step-end infinite;
+  color: var(--accent-color);
+  margin-left: 4px;
+}
+
+@keyframes terminal-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 html.dark .flow-log-step.is-live .flow-log-pre {
-  border-color: rgba(96, 165, 250, 0.45);
-  box-shadow: inset 3px 0 0 0 rgba(96, 165, 250, 0.55);
+  border-color: rgba(6, 182, 212, 0.6);
+  box-shadow: inset 3px 0 0 0 #06b6d4, 0 0 12px rgba(6, 182, 212, 0.3);
+}
+
+html.dark .flow-log-step.is-live .flow-log-pre::after {
+  color: #06b6d4;
 }
 
 .flow-log-pre {
@@ -1514,19 +1604,22 @@ html.dark .flow-log-step.is-live .flow-log-pre {
   max-height: 320px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 4px;
   font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
   font-size: 11px;
   line-height: 1.5;
-  /* 浅色下用近黑色正文，避免仅用 var(--text-primary) 时被继承链/组件库压成浅灰 */
-  color: #111827;
+  color: #334155;
   opacity: 1;
   white-space: pre-wrap;
   word-break: break-word;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
 }
 
 html.dark .flow-log-pre {
-  color: #e3e3e8;
+  background: #0a0e17;
+  border: 1px solid rgba(6, 182, 212, 0.2);
+  color: #06b6d4;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
 }
 
 .flow-log-step.failed .flow-log-pre {

@@ -48,14 +48,14 @@
       <!-- ========== Home 概览面板 ========== -->
       <template v-if="showOverviewPanel">
         <!-- 顶部标题栏 -->
-        <div class="px-4 py-3 border-b border-(--border-color)">
-          <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded-lg bg-(--accent-color)/20 flex items-center justify-center">
-              <i class="ri-flow-chart text-(--accent-color) text-lg"></i>
+        <div class="px-4 py-4 border-b border-(--border-color)">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center justify-center">
+              <i class="ri-flow-chart text-(--text-secondary) text-xl"></i>
             </div>
             <div>
-              <h3 class="text-[13px] font-bold text-(--text-primary)">Flow Overview</h3>
-              <p class="text-[10px] text-(--text-secondary)">RTL to GDS Pipeline</p>
+              <h3 class="text-[14px] font-semibold text-(--text-primary) tracking-wide">Flow Overview</h3>
+              <p class="text-[11px] text-(--text-secondary) mt-0.5">RTL to GDS Pipeline</p>
             </div>
           </div>
         </div>
@@ -261,14 +261,14 @@
       <!-- ========== 子流程面板 ========== -->
       <template v-else-if="showSubflowPanel">
         <!-- 顶部标题栏 -->
-        <div class="px-4 py-3 border-b border-(--border-color)">
-          <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded-lg bg-(--accent-color)/20 flex items-center justify-center">
-              <i class="ri-focus-2-line text-(--accent-color) text-lg"></i>
+        <div class="px-4 py-4 border-b border-(--border-color)">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center justify-center">
+              <i class="ri-focus-2-line text-(--text-secondary) text-xl"></i>
             </div>
             <div>
-              <h3 class="text-[13px] font-bold text-(--text-primary)">{{ currentStepTitle }}</h3>
-              <p class="text-[10px] text-(--text-secondary)">{{ currentStepEngine }}</p>
+              <h3 class="text-[14px] font-semibold text-(--text-primary) tracking-wide">{{ currentStepTitle }}</h3>
+              <p class="text-[11px] text-(--text-secondary) mt-0.5">{{ currentStepEngine }}</p>
             </div>
           </div>
         </div>

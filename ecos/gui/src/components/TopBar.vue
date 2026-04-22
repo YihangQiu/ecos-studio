@@ -30,7 +30,7 @@
         </div>
       </div>
     </div>
-
+ 
     <div class="topbar-center">
       <span class="project-name">{{ props.projectName }}</span>
     </div>
@@ -172,6 +172,8 @@ const handleKeydown = (e: KeyboardEvent) => {
 }
 
 const isMaximized = ref(false)
+// 仅在 resize 停歇后才同步一次，避免每帧触发一次跨进程 IPC
+let resizeSyncTimer: ReturnType<typeof setTimeout> | undefined
 let unlistenResized: (() => void) | undefined
 
 async function syncMaximizedState() {
@@ -182,13 +184,22 @@ async function syncMaximizedState() {
   }
 }
 
+function scheduleSyncMaximizedState(delay = 150) {
+  if (resizeSyncTimer) clearTimeout(resizeSyncTimer)
+  resizeSyncTimer = setTimeout(() => {
+    resizeSyncTimer = undefined
+    void syncMaximizedState()
+  }, delay)
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('keydown', handleKeydown)
   void syncMaximizedState()
+  // onResized 在拖动窗口时会以帧率触发，这里做去抖只在停歇后同步
   getCurrentWindow()
     .onResized(() => {
-      void syncMaximizedState()
+      scheduleSyncMaximizedState()
     })
     .then((unlisten) => {
       unlistenResized = unlisten
@@ -201,6 +212,10 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('keydown', handleKeydown)
+  if (resizeSyncTimer) {
+    clearTimeout(resizeSyncTimer)
+    resizeSyncTimer = undefined
+  }
   unlistenResized?.()
 })
 
@@ -285,6 +300,16 @@ const handleMouseDown = async (event: MouseEvent) => {
   height: 28px;
   color: var(--accent-color);
   font-size: 18px;
+}
+
+.app-icon-img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
 }
 
 .menu-items {

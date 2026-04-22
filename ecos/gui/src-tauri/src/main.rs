@@ -23,7 +23,7 @@ use tauri_plugin_fs::FsExt;
 use tile_cache::{
     finalize_layout_tile_cache_meta, generate_layout_tiles, prepare_layout_tile_cache,
 };
-use window_commands::{window_close, window_maximize, window_minimize};
+use window_commands::{clamp_window_to_monitor, window_close, window_maximize, window_minimize};
 
 fn main() {
     // Default to warnings in production while still honoring RUST_LOG overrides.
@@ -47,6 +47,11 @@ fn main() {
             let api_port = api_port.clone();
             move |app| {
                 let window = app.get_webview_window("main").unwrap();
+
+                // 根据当前显示器的逻辑尺寸对窗口做一次限幅 + 重新居中，
+                // 避免在低分辨率/高 DPI 缩放下窗口溢出屏幕，导致 TopBar
+                // 右侧的窗口控制按钮被推到可视区外无法点击。
+                clamp_window_to_monitor(&window);
 
                 // Start the FastAPI server (or detect an externally started one)
                 let (using_external_server, actual_port) = {

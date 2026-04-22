@@ -93,7 +93,7 @@
           <img v-if="layoutBlobUrl" :src="layoutBlobUrl" alt="Layout Preview" class="layout-image"
             :style="layoutImageTransform" draggable="false" />
           <!-- 科技感扫描线 -->
-          <div v-if="layoutBlobUrl && !isLayoutFullscreen" class="scanner-line"></div>
+          <!-- <div v-if="layoutBlobUrl && !isLayoutFullscreen" class="scanner-line"></div> -->
           <div v-else-if="!layoutBlobUrl" class="layout-placeholder">
             <i class="ri-image-2-line"></i>
             <p>Layout Preview</p>
@@ -258,12 +258,14 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useParameters } from '@/composables/useParameters'
 import { useHomeData, type AnalysisChartItem, type FlowLogSegment } from '@/composables/useHomeData'
+import { isWindowResizing } from '@/composables/useWindowResizeState'
 
 // 注册 ECharts 组件（按需引入）
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
@@ -312,6 +314,19 @@ function scrollFlowLogPanelsToEnd(): void {
   })
 }
 
+// 多次日志更新可能在一帧内触发（初始化 + 渐进写入），合并成一次 DOM 操作
+let pendingFlowLogScroll: number | null = null
+function scheduleFlowLogScroll(): void {
+  if (pendingFlowLogScroll !== null) return
+  pendingFlowLogScroll = requestAnimationFrame(() => {
+    pendingFlowLogScroll = null
+    scrollFlowLogPanelsToEnd()
+  })
+}
+
+// 仍然需要 deep: true：live 段会原地替换数组元素（content 递增），
+// 仅浅比较会漏掉这类增量；但把原先的双层 rAF 合并为单 rAF，
+// 高频追加场景下主线程开销从"每段日志两帧"降到"每段日志一帧"。
 watch(
   flowLogSegments,
   async (segs) => {
@@ -320,11 +335,7 @@ watch(
       if (!alive.has(k)) delete pinFlowLogTail[k]
     }
     await nextTick()
-    // 内层 <pre> 在布局后才有正确 scrollHeight；rAF 再跟一轮以适配渐进写入
-    requestAnimationFrame(() => {
-      scrollFlowLogPanelsToEnd()
-      requestAnimationFrame(() => scrollFlowLogPanelsToEnd())
-    })
+    scheduleFlowLogScroll()
   },
   { deep: true }
 )
@@ -343,7 +354,9 @@ const isLayoutFullscreen = ref(false)
 const layoutScale = ref(1)
 const layoutTranslateX = ref(0)
 const layoutTranslateY = ref(0)
-let isDragging = false
+// isDragging 必须是 ref，否则 layoutImageTransform 的 computed 不会在拖动时重算，
+// cursor 会卡在 'grab' 上。
+const isDragging = ref(false)
 let dragStartX = 0
 let dragStartY = 0
 let dragStartTX = 0
@@ -354,7 +367,11 @@ const layoutImageTransform = computed(() => {
   return {
     transform: `translate(${layoutTranslateX.value}px, ${layoutTranslateY.value}px) scale(${layoutScale.value})`,
     transformOrigin: 'center center',
-    cursor: isDragging ? 'grabbing' : (layoutScale.value > 1 ? 'grab' : 'default'),
+    cursor: isDragging.value ? 'grabbing' : (layoutScale.value > 1 ? 'grab' : 'default'),
+    // 拖动时关闭 transition：每帧 mousemove 都会设置新 transform，
+    // 留着 transition 反而让手感"延迟一帧"
+    transition: isDragging.value ? 'none' : undefined,
+    willChange: 'transform',
   }
 })
 
@@ -408,7 +425,7 @@ function onLayoutWheel(e: WheelEvent) {
 
 function onLayoutMouseDown(e: MouseEvent) {
   if (!isLayoutFullscreen.value || layoutScale.value <= 1) return
-  isDragging = true
+  isDragging.value = true
   dragStartX = e.clientX
   dragStartY = e.clientY
   dragStartTX = layoutTranslateX.value
@@ -416,24 +433,27 @@ function onLayoutMouseDown(e: MouseEvent) {
 }
 
 function onLayoutMouseMove(e: MouseEvent) {
-  if (!isDragging) return
+  if (!isDragging.value) return
   layoutTranslateX.value = dragStartTX + (e.clientX - dragStartX)
   layoutTranslateY.value = dragStartTY + (e.clientY - dragStartY)
 }
 
 function onLayoutMouseUp() {
-  isDragging = false
+  isDragging.value = false
 }
 
 // ============ ECharts 折线图 ============
 
-// 4 个图表容器 ref
 // 动态图表 ref & 实例管理
 const chartRefs = new Map<string, HTMLDivElement>()
 const chartInstances = new Map<string, echarts.ECharts>()
+/** 已经完成首次 setOption 的实例集合；之后的更新走增量路径 */
+const chartInitialized = new WeakSet<echarts.ECharts>()
 
 // ResizeObserver
 let resizeObserver: ResizeObserver | null = null
+/** ResizeObserver 合并多个 entry 到单次 rAF，避免同一帧里反复 init + resize */
+let pendingResizeRaf: number | null = null
 
 /** 预置配色盘 —— 按 key 出现顺序循环取色 */
 const COLOR_PALETTE = [
@@ -458,9 +478,9 @@ const chartConfigs = computed(() => {
 
 /** 设置图表 DOM ref 的回调（用于 v-for 中的 :ref） */
 function setChartRef(key: string) {
-  return (el: any) => {
-    if (el) {
-      chartRefs.set(key, el as HTMLDivElement)
+  return (el: Element | ComponentPublicInstance | null) => {
+    if (el instanceof HTMLDivElement) {
+      chartRefs.set(key, el)
     } else {
       chartRefs.delete(key)
     }
@@ -664,6 +684,19 @@ function bindChartLinkEvents(instance: echarts.ECharts) {
   })
 }
 
+/**
+ * 构建仅包含 series data 的最小化 option patch，用于增量更新。
+ * 相比 buildChartOption 全量替换，能省掉 grid/tooltip/axis 等配置的 diff。
+ */
+function buildChartDataPatch(key: string): echarts.EChartsCoreOption {
+  const values = getMetricValues(key)
+  const steps = monitorData.value?.step || []
+  return {
+    xAxis: { data: steps },
+    series: [{ data: values }],
+  }
+}
+
 /** 初始化或更新所有图表 */
 function initOrUpdateCharts() {
   let newInstanceCreated = false
@@ -683,7 +716,17 @@ function initOrUpdateCharts() {
       newInstanceCreated = true
     }
 
-    instance.setOption(buildChartOption(cfg.key, cfg.color), true)
+    if (!chartInitialized.has(instance)) {
+      // 首次：全量 option + 触发入场动画
+      instance.setOption(buildChartOption(cfg.key, cfg.color), true)
+      chartInitialized.add(instance)
+    } else {
+      // 之后：只更新数据，保留轴/tooltip/样式配置，跳过入场动画避免抖动
+      instance.setOption(buildChartDataPatch(cfg.key), {
+        notMerge: false,
+        lazyUpdate: true,
+      })
+    }
   }
 
   // 有新图表加入分组时，重新注册 connect 以确保联动生效
@@ -707,37 +750,59 @@ function resizeAllCharts() {
   }
 }
 
-/** 监听图表容器尺寸变化，处理初始化和 resize */
+/**
+ * 监听图表容器尺寸变化，处理首次初始化和 resize。
+ *
+ * 合并策略：
+ *  - 多个 entry 同帧触发时合并为一次 rAF 回调
+ *  - 窗口缩放期间（isWindowResizing=true）**完全跳过** canvas 重绘：
+ *    ECharts 的 canvas 会被 CSS 自然拉伸展示，拖动手感最滑。
+ *    缩放结束时由下方 `watch(isWindowResizing)` 再做一次清晰重绘。
+ */
 function setupResizeObserver() {
   resizeObserver?.disconnect()
   resizeObserver = new ResizeObserver(() => {
-    // 尝试初始化尚未创建的图表（首次获得有效尺寸时）
-    if (monitorData.value) {
-      initOrUpdateCharts()
-    }
-    // 已有图表 resize
-    resizeAllCharts()
+    if (pendingResizeRaf !== null) return
+    pendingResizeRaf = requestAnimationFrame(() => {
+      pendingResizeRaf = null
+      // 首次获得有效尺寸的容器仍需在此完成 init，否则图表一直是空的
+      if (monitorData.value) initOrUpdateCharts()
+      // 窗口正在缩放时，canvas 让 CSS 拉伸，跳过代价昂贵的逐帧 resize
+      if (isWindowResizing.value) return
+      resizeAllCharts()
+    })
   })
 
-  // 观察所有图表容器
   for (const el of chartRefs.values()) {
-    if (el) {
-      resizeObserver.observe(el)
-    }
+    if (el) resizeObserver.observe(el)
   }
 }
 
-// 监听 monitorData 变化，更新图表
-watch(
-  () => monitorData.value,
-  async () => {
-    await nextTick()
-    // 数据变化后可能 v-if 刚渲染出新的 DOM，重新绑定 observer
-    setupResizeObserver()
-    initOrUpdateCharts()
-  },
-  { deep: true }
-)
+// 窗口缩放结束的瞬间把所有 canvas 按当前容器尺寸一次性清晰重绘；
+// 拖拽过程中累计的尺寸变化都在这里"补上"。
+watch(isWindowResizing, (resizing) => {
+  if (resizing) return
+  if (pendingResizeRaf !== null) {
+    cancelAnimationFrame(pendingResizeRaf)
+    pendingResizeRaf = null
+  }
+  // 使用 rAF 而非同步调用，确保此时布局已稳定
+  requestAnimationFrame(() => {
+    resizeAllCharts()
+  })
+})
+
+/**
+ * 监听 monitorData 变化更新图表。
+ * useHomeData 每次都会给 monitorData.value 赋值新对象，浅层 watch 即可触发；
+ * 避免原先 deep: true 对 MonitorData 里的每个数组递归 traverse —— 数据量大时
+ * 这一步会明显消耗主线程。
+ */
+watch(monitorData, async () => {
+  await nextTick()
+  setupResizeObserver()
+  initOrUpdateCharts()
+})
 
 onMounted(async () => {
   await nextTick()
@@ -752,6 +817,14 @@ onUnmounted(() => {
   disposeCharts()
   resizeObserver?.disconnect()
   resizeObserver = null
+  if (pendingResizeRaf !== null) {
+    cancelAnimationFrame(pendingResizeRaf)
+    pendingResizeRaf = null
+  }
+  if (pendingFlowLogScroll !== null) {
+    cancelAnimationFrame(pendingFlowLogScroll)
+    pendingFlowLogScroll = null
+  }
   document.removeEventListener('keydown', onFullscreenKeydown)
 })
 
@@ -886,8 +959,13 @@ function stateClass(state: string): string {
 
 .layout-area.is-fullscreen .layout-image {
   object-fit: contain;
+  /*
+   * 仅在滚轮缩放时给 50ms 缓动，拖动时由 inline style 设为 'none'，
+   * 避免 transition 打断每帧 mousemove 造成视觉拖尾。
+   */
   transition: transform 0.05s ease-out;
   user-select: none;
+  will-change: transform;
 }
 
 /* 缩放百分比指示器 */
@@ -932,6 +1010,12 @@ function stateClass(state: string): string {
   min-height: 0;
   position: relative;
   box-shadow: inset 0 0 20px rgba(var(--accent-rgb, 59, 130, 246), 0.02);
+  /*
+   * 告诉浏览器：卡片内部的布局 / 绘制 / 样式变化都不会影响外部。
+   * 这样 dashboard-grid 的尺寸改变时，浏览器只需对变化的卡片内部重排，
+   * 不用把重排向上传播到整个页面，对 grid 布局场景尤其显著。
+   */
+  contain: layout paint style;
 }
 
 /* HUD 瞄准框角标 */
@@ -1148,6 +1232,11 @@ html.dark .info-value.highlight {
   height: 100%;
   min-height: 24px;
   min-width: 0;
+  /*
+   * 图表容器内只有一个 canvas，隔离它的布局/绘制不影响外部。
+   * 不使用 `contain: size`，避免 flex 计算时容器被当成 0 尺寸。
+   */
+  contain: layout paint style;
 }
 
 .monitor-chart {
@@ -1281,33 +1370,42 @@ html.dark .monitor-value {
   height: 100%;
   object-fit: contain;
   display: block;
+  /* 让浏览器尽量为这张图建立独立合成层，resize 时不会反复重采样 */
+  will-change: transform;
 }
 
 /* ==================== 指标分析 ==================== */
 .analysis-content {
   flex: 1;
+  min-height: 0;
   padding: 8px;
   overflow: auto;
 }
 
+/*
+ * 关键点：
+ * 1) 用 minmax(0, 1fr) 代替裸 1fr。裸 1fr 等价于 minmax(auto, 1fr)，
+ *    会把 track 的下限抬到子元素的最小内容尺寸 —— 指标图片的固有大小
+ *    会反向把某一行顶大、另一行挤成细条。
+ * 2) grid-auto-rows 也用 minmax(0, 1fr) 兜底：万一卡片数量 × 列数组合
+ *    意外创建了第 3 行（例如 7 个卡片 + 3 列），这一行默认 auto 又会被
+ *    图片固有尺寸撑开，引发和 (1) 同类的错位。
+ */
 .charts-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
   gap: 6px;
   height: 100%;
 }
 
-/* Last row span adjustment for uneven items */
-.chart-card:nth-child(5) {
-  grid-column: 1;
-}
-
-.chart-card:nth-child(6) {
-  grid-column: 2;
-}
-
-.chart-card:nth-child(7) {
+/*
+ * 仅当恰好有 7 个卡片（且 7 是最后一个）时，让第 7 个跨占 4 列布局下
+ * 第二行剩下的两列。其它数量（5/6/7 在 3 列下等）让其走自动排布，
+ * 否则 grid-column: 1 会和第 4 个卡片的默认位置冲突，把第 5 个挤到新行。
+ */
+.chart-card:nth-child(7):last-child {
   grid-column: 3 / 5;
 }
 
@@ -1321,9 +1419,13 @@ html.dark .monitor-value {
   justify-content: center;
   gap: 8px;
   padding: 8px;
+  min-width: 0;
+  min-height: 0;
   transition: all 0.2s ease;
   cursor: pointer;
   overflow: hidden;
+  /* 指标图表卡片内容不影响外部，resize 时也不会牵连兄弟卡片重排 */
+  contain: layout paint style;
 }
 
 .chart-card:hover {
@@ -1342,6 +1444,7 @@ html.dark .chart-card:hover {
   align-items: center;
   justify-content: center;
   width: 100%;
+  min-width: 0;
   min-height: 0;
   font-size: 28px;
   color: var(--text-secondary);
@@ -1349,6 +1452,7 @@ html.dark .chart-card:hover {
   border-radius: 4px;
   border: 1px solid rgba(0, 0, 0, 0.05);
   padding: 4px;
+  overflow: hidden;
 }
 
 .chart-visual i {
@@ -1915,11 +2019,12 @@ html.dark .flow-log-pre {
   }
 
   .charts-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .chart-card:nth-child(7) {
-    grid-column: 3;
+  /* 3 列布局下不需要 4 列模式的 span，让第 7 个卡片走自动排布 */
+  .chart-card:nth-child(7):last-child {
+    grid-column: auto;
   }
 }
 
@@ -1939,6 +2044,27 @@ html.dark .flow-log-pre {
 
   .section-card {
     min-height: 200px;
+  }
+
+  /*
+   * 单列堆叠模式下 analysis-area 的容器高度被 min-height: 200px 卡死，
+   * 再强行套"2 行"布局会把每行压到 < 40px，指标图片只剩一条细线。
+   * 这里改用 auto-fill，让卡片按最小可读尺寸自然换行，容器高度由内容决定，
+   * 并清掉放大模式下的 nth-child 位置约束，避免换行后列号对不上。
+   */
+  .analysis-area {
+    min-height: 280px;
+  }
+
+  .charts-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    grid-template-rows: none;
+    grid-auto-rows: minmax(120px, 1fr);
+    align-content: start;
+  }
+
+  .chart-card:nth-child(7):last-child {
+    grid-column: auto;
   }
 }
 </style>

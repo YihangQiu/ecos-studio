@@ -60,6 +60,7 @@ import TopBar from '@/components/TopBar.vue'
 import Toast from 'primevue/toast'
 import NewProjectWizard from '@/components/NewProjectWizard.vue'
 import type { WorkspaceConfig } from '@/types'
+import { setWindowResizing } from '@/composables/useWindowResizeState'
 
 const router = useRouter()
 const themeStore = useThemeStore()
@@ -112,11 +113,53 @@ const handleMenuAction = async (action: string) => {
 let isResizing = false
 type ResizeDirection = 'East' | 'North' | 'NorthEast' | 'NorthWest' | 'South' | 'SouthEast' | 'SouthWest' | 'West';
 
-const startResize = async (direction: ResizeDirection) => {
+// 统一管理 `.window-resizing` class：
+// - `startResize` / `onResized` 任一来源都会打上这个 class
+// - 超过 RESIZE_IDLE_MS 没有新尺寸事件即视为结束
+// 这样即使 Linux 下 `startResizeDragging` 让 WM 接管鼠标、浏览器收不到 mouseup，
+// 也能正确解除降级状态，不会出现"resize 完后界面一直丢失阴影/模糊"。
+const RESIZE_IDLE_MS = 180
+let resizeIdleTimer: ReturnType<typeof setTimeout> | undefined
+let unlistenWindowResized: (() => void) | undefined
+
+const markResizing = () => {
   isResizing = true
   document.body.classList.add('window-resizing')
-  const window = getCurrentWindow()
-  await window.startResizeDragging(direction)
+  // 广播全局状态，组件（如 HomeView 的 ECharts）可据此跳过昂贵重绘
+  setWindowResizing(true)
+  // 立即同步一次最大化状态：最大化发生在 resize 的瞬间，
+  // 如果只在 idle 回调里同步，会有 RESIZE_IDLE_MS 的窗口期露白。
+  void syncMaximizedClass()
+  if (resizeIdleTimer) clearTimeout(resizeIdleTimer)
+  resizeIdleTimer = setTimeout(() => {
+    resizeIdleTimer = undefined
+    isResizing = false
+    document.body.classList.remove('window-resizing')
+    setWindowResizing(false)
+    // 停歇时再同步一次，兜底系统贴边 / 快捷键等中间态没覆盖的情况
+    void syncMaximizedClass()
+  }, RESIZE_IDLE_MS)
+}
+
+const startResize = async (direction: ResizeDirection) => {
+  markResizing()
+  await getCurrentWindow().startResizeDragging(direction)
+}
+
+/**
+ * 同步窗口最大化状态到 body.window-maximized。
+ *
+ * 目的：Linux (WebKitGTK) 下「透明 + 无装饰 + 最大化」组合会让 webview
+ * 露出白色画布，因此最大化时需要把根层背景改成主题色、去掉圆角边框，
+ * 见 styles/index.css 与本文件 scoped 样式中的 `.window-maximized` 规则。
+ */
+async function syncMaximizedClass() {
+  try {
+    const maxed = await getCurrentWindow().isMaximized()
+    document.body.classList.toggle('window-maximized', maxed)
+  } catch {
+    /* ignore: window API unavailable (e.g. SSR / test) */
+  }
 }
 
 // 阻止拖拽调整窗口大小时的文本选择
@@ -127,27 +170,38 @@ const handleSelectStart = (e: Event) => {
   }
 }
 
-const handleMouseUp = () => {
-  if (isResizing) {
-    isResizing = false
-    document.body.classList.remove('window-resizing')
-  }
-}
-
 onMounted(async () => {
   themeStore.initTheme()
   // 在应用启动时加载最近项目和已导入的 PDK
   await Promise.all([loadRecentProjects(), loadPdks()])
 
-  // 添加事件监听
   document.addEventListener('selectstart', handleSelectStart)
-  document.addEventListener('mouseup', handleMouseUp)
+
+  // 启动时先同步一次最大化状态（从持久化会话恢复的场景）
+  void syncMaximizedClass()
+
+  // 由 Tauri 的 resize 事件统一驱动降级状态，覆盖所有缩放来源
+  // （边缘拖拽、标题栏双击最大化、系统贴边、快捷键等）。
+  getCurrentWindow()
+    .onResized(() => markResizing())
+    .then((unlisten) => {
+      unlistenWindowResized = unlisten
+    })
+    .catch(() => {
+      /* ignore */
+    })
 })
 
 onUnmounted(() => {
   document.removeEventListener('selectstart', handleSelectStart)
-  document.removeEventListener('mouseup', handleMouseUp)
+  if (resizeIdleTimer) {
+    clearTimeout(resizeIdleTimer)
+    resizeIdleTimer = undefined
+  }
+  unlistenWindowResized?.()
   document.body.classList.remove('window-resizing')
+  document.body.classList.remove('window-maximized')
+  setWindowResizing(false)
 })
 </script>
 
@@ -227,6 +281,48 @@ onUnmounted(() => {
   transform: scale(0.96);
   opacity: 0.85;
 }
+
+/*
+ * 窗口 resize 期间的性能降级：
+ * 无装饰 + 透明窗口下，每一帧的布局/合成代价都很高，叠加 blur、阴影、
+ * 过渡/动画会让拖边界的手感明显卡顿。resize 停歇后（App.vue 里通过
+ * onResized + 去抖移除 class）自动恢复，所以视觉上几乎感觉不到差别。
+ */
+.window-resizing,
+.window-resizing * {
+  transition: none !important;
+  animation: none !important;
+  filter: none !important;
+  -webkit-filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  scroll-behavior: auto !important;
+}
+
+/*
+ * 额外降级：隐藏带 background-image 渐变绘制的 HUD 角标 / 栅格线等装饰。
+ * 这些元素每帧都需要 repaint，单独一个就抵掉半帧预算，resize 期间不渲染
+ * 它们能显著提升拖拽流畅度。
+ */
+.window-resizing .bg-grid,
+.window-resizing .layout-content {
+  background-image: none !important;
+}
+
+.window-resizing .section-card::after {
+  display: none !important;
+}
+
+/* resize 期间图片用最快速路径重采样，避免触发高质量重采样造成的抖动 */
+.window-resizing img {
+  image-rendering: auto;
+}
+
+.window-resizing {
+  cursor: default;
+}
 </style>
 
 <style scoped>
@@ -248,6 +344,18 @@ onUnmounted(() => {
   background: var(--bg-primary);
   /* 边框 - 微弱的亮色边框 */
   border: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+/*
+ * 最大化时取消圆角 + 边框：
+ * 最大化后窗口占满屏幕，圆角外露出的就是 webview 白画布（也就是截图里
+ * 那片白屏）。把圆角去掉后 .app-container 能贴住窗口四边，彻底没处可露。
+ * body 不会被 scoped 加 data-v 属性（它是 ancestor），`.app-container`
+ * 是本组件自身元素，scoped 转换后选择器仍能正确命中。
+ */
+body.window-maximized .app-container {
+  border-radius: 0;
+  border: none;
 }
 
 .app-content {

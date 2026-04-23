@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
+#[cfg(not(debug_assertions))]
+use tauri::Manager;
 pub type ApiServerProcess = Arc<Mutex<Option<Child>>>;
 pub type ActualApiPort = Arc<Mutex<u16>>;
 

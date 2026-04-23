@@ -1,6 +1,5 @@
-.PHONY: help setup check-setup build dev gui clean-gui dreamplace-wheel demo-gcd demo-soc demo-retrosoc docker-build docker-verify-all install-deps install-apt-deps install-tools
+.PHONY: help setup check-setup check-platform build dev use-local-ecc gui clean-gui demo-gcd demo-soc demo-retrosoc docker-build docker-verify-all install-deps install-apt-deps install-tools
 
-WHEEL_DIR := $(CURDIR)/ecc/dist/wheel/repaired
 BUNDLE_TAR := bazel-bin/ecos/ecos_studio_bundle/ecos_studio_bundle.tar
 BUNDLE_EXTRACT_DIR := /tmp/ecos-studio-bundle
 APPIMAGE_MARKER := $(BUNDLE_EXTRACT_DIR)/.extracted
@@ -19,12 +18,12 @@ help:
 	@echo "  make setup      - Init submodules and setup PDK"
 	@echo "  make build      - Build ECOS Studio bundle (Bazel)"
 	@echo "  make dev        - Setup development environment"
+	@echo "  make use-local-ecc - Use local ECC checkout in server venv"
 	@echo "  make gui        - Launch GUI (release version)"
 	@echo "  make clean-gui  - Clean extracted GUI bundle"
 	@echo "  make demo-gcd   - Run GCD demo"
 	@echo "  make demo-soc   - Run SoC demo"
 	@echo "  make demo-retrosoc - Run retroSoC demo"
-	@echo "  make dreamplace-wheel - Build ecc-dreamplace wheel (auditwheel repair + smoke test)"
 	@echo "  make docker-build  - Build Docker verification image"
 	@echo "  make docker-verify-all - Run all demos in Docker"
 
@@ -79,8 +78,6 @@ setup:
 	    DEPS_SKIPPED=false; \
 	fi && \
 	git submodule update --init --recursive && \
-	cd ecc && bazel run //:prepare_dev && \
-	cd .. && \
 	echo "timestamp=$$(date +%Y-%m-%dT%H:%M:%S%z)" > .setup-done && \
 	echo "deps_skipped=$$DEPS_SKIPPED" >> .setup-done && \
 	echo "bazel=$$(command -v bazel) ($$(bazel --version 2>/dev/null | head -1))" >> .setup-done && \
@@ -92,25 +89,36 @@ check-setup:
 		echo "Error: Please run 'make setup' before this target."; \
 		exit 1; \
 	fi
-	@if [ ! -d ecc/.venv ]; then \
-		echo "Error: ecc/.venv not found. Please run 'make setup' to create it."; \
+
+check-platform:
+	@if [ "$$(uname -s)" != "Linux" ] || [ "$$(uname -m)" != "x86_64" ]; then \
+		echo "Error: ECOS Studio server development currently requires Linux x86_64 with glibc >= 2.34."; \
+		echo "The locked uv environment uses pinned manylinux_2_34_x86_64 wheels for ecc-dreamplace and ecc-tools."; \
+		exit 1; \
+	fi; \
+	GLIBC_VERSION=$$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{ print $$2 }'); \
+	GLIBC_MAJOR=$${GLIBC_VERSION%%.*}; \
+	GLIBC_MINOR=$${GLIBC_VERSION#*.}; \
+	GLIBC_MINOR=$${GLIBC_MINOR%%[^0-9]*}; \
+	GLIBC_MAJOR=$${GLIBC_MAJOR:-0}; \
+	GLIBC_MINOR=$${GLIBC_MINOR:-0}; \
+	if [ "$$GLIBC_MAJOR" -lt 2 ] || { [ "$$GLIBC_MAJOR" -eq 2 ] && [ "$$GLIBC_MINOR" -lt 34 ]; }; then \
+		echo "Error: ECOS Studio server development requires glibc >= 2.34 (detected: $${GLIBC_VERSION:-unknown})."; \
+		echo "The pinned ecc-dreamplace and ecc-tools wheels are tagged manylinux_2_34_x86_64."; \
 		exit 1; \
 	fi
 
-dev: check-setup
+dev: check-setup check-platform
 	@cd ecos/server && uv sync --frozen --all-groups --all-extras --python 3.11
 	@cd ecos/gui && pnpm install
 	bazel run //ecos:dev_symlinks
 
-$(BUNDLE_TAR): check-setup
-	cd ecc && bazel run //:build_dreamplace_wheel
-	cd ecc && bazel run //:build_wheel
+use-local-ecc: check-setup check-platform
 	@cd ecos/server && uv sync --frozen --all-groups --all-extras --python 3.11
-	@ECC_WHL=$$(find $(WHEEL_DIR) -name 'ecc-0.1.0-*.whl' | head -1) && \
-		DP_WHL=$$(find $(WHEEL_DIR) -name 'ecc_dreamplace-0.1.0-*.whl' | head -1) && \
-		[ -n "$$ECC_WHL" ] || { echo "Error: ecc wheel not found in $(WHEEL_DIR)"; exit 1; } && \
-		[ -n "$$DP_WHL" ] || { echo "Error: ecc_dreamplace wheel not found in $(WHEEL_DIR)"; exit 1; } && \
-		cd ecos/server && uv pip install --reinstall --no-deps "$$ECC_WHL" "$$DP_WHL"
+	@cd ecos/server && uv pip install --reinstall --no-deps -e ../../ecc
+
+$(BUNDLE_TAR): check-setup check-platform
+	@cd ecos/server && uv sync --frozen --all-groups --all-extras --python 3.11
 	PATH=$(CURDIR)/ecos/server/.venv/bin:$$PATH bazel build //:ecos_studio_bundle
 
 $(APPIMAGE_MARKER): $(BUNDLE_TAR)
@@ -128,11 +136,8 @@ clean-gui:
 	rm -rf $(BUNDLE_EXTRACT_DIR)
 
 clean:
-	bazel clean && cd ecc && bazel clean
+	bazel clean
 	@rm -f .setup-done
-
-dreamplace-wheel: check-setup
-	cd ecc && bazel run //:build_dreamplace_wheel
 
 demo-gcd: check-setup
 	nix run $(ECC_CLI) -- --workspace $(GCD_WS) \

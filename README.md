@@ -42,6 +42,10 @@ Enabling mainstream manufacturing processes.
 
 ## Quick Start (For Developers)
 
+Server development and release builds currently require Linux x86_64 with glibc
+2.34 or newer because the server uv environment uses pinned
+manylinux_2_34_x86_64 wheels for `ecc-dreamplace` and `ecc-tools`.
+
 ```bash
 # Setup (init submodules, PDK, and ECC environment)
 make setup
@@ -49,7 +53,7 @@ make setup
 # Development
 make dev
 
-# Release build (wheels + bundle + AppImage)
+# Release build (locked release wheels + bundle + AppImage)
 make build
 
 # Launch GUI
@@ -63,7 +67,7 @@ make demo-gcd           # GCD example
 make demo-retrosoc      # retroSoC example
 ```
 
-For development setup, ecc-tools builds, ecc-dreamPlace builds, wheel builds, and release build details, see [ecos/README.md](ecos/README.md).
+For development setup, release wheel usage, and release build details, see [ecos/README.md](ecos/README.md).
 
 ## Documentation
 

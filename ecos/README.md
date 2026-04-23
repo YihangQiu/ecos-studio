@@ -16,6 +16,15 @@ ECOS Studio is a desktop application that provides an integrated development env
 
 ## Quick Start (For Developers)
 
+### Platform Support
+
+Server development and release builds currently require Linux x86_64 with glibc
+2.34 or newer. The server uv environment is locked to pinned GitHub Release
+wheels for `ecc-dreamplace` and `ecc-tools`, and those native wheels are
+published as manylinux_2_34_x86_64 artifacts. macOS, Windows, non-x86_64 Linux
+hosts, and Linux distributions with older glibc are not supported by `make dev`,
+`make use-local-ecc`, or `make build` yet.
+
 ### Development
 
 ```bash
@@ -39,19 +48,16 @@ bazel run //bazel/scripts:install_dreamplace    # Build + install .so files
 bazel run //bazel/scripts:clean_dreamplace      # Remove installed artifacts (manifest-based)
 ```
 
-### Building Wheels
+### Release Wheels
 
-Both wheels are output to `ecc/dist/wheel/repaired/` after auditwheel repair and smoke test:
+Release builds use pinned GitHub Release wheels through `ecos/server/pyproject.toml` and `ecos/server/uv.lock`.
 
 ```bash
-# DreamPlace wheel (CMake compile .so → raw wheel → auditwheel repair → smoke test)
-cd ecc && bazel run //:build_dreamplace_wheel   # → ecc_dreamplace-*-linux_x86_64.whl
+# Re-sync the server environment from the locked release wheels
+cd ecos/server && uv sync --frozen --all-groups --python 3.11
 
-# ECC wheel (ECC-Tools runtime → raw wheel → auditwheel repair → smoke test)
-cd ecc && bazel run //bazel/scripts:build_wheel # → ecc_tools-*-linux_x86_64.whl
-
-# Or use the convenience target for DreamPlace
-make dreamplace-wheel
+# Optional: switch the server venv to the local ECC checkout for development
+make use-local-ecc
 ```
 
 ### Release Build
@@ -59,7 +65,7 @@ make dreamplace-wheel
 `make build` runs the full pipeline:
 
 ```
-build wheels → uv sync (runtime deps) → install wheels into venv → PyInstaller bundle → AppImage
+uv sync locked release wheels → PyInstaller bundle → AppImage
 ```
 
 ```bash
@@ -70,11 +76,9 @@ make build
 make gui
 ```
 
-The wheels are installed as **non-editable** packages so that PyInstaller's `collect_all("dreamplace")` and `collect_all("chipcompiler")` can discover all package files during bundling.
+The release wheels are installed as **non-editable** packages so that PyInstaller's `collect_all("dreamplace")` and `collect_all("chipcompiler")` can discover all package files during bundling.
 
 ## Documentation
 
 - [User Guide](docs/user-guide.md) - Complete guide to using ECOS Studio
 - [ECC Documentation](https://github.com/openecos-projects/ecc/blob/main/README.md) - ECC toolchain documentation
-
-

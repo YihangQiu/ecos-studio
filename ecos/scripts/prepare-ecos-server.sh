@@ -16,22 +16,35 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "==> Building ECC wheel..."
-(
-    cd "$WS/ecc"
-    bazel run //:build_wheel
-)
+check_platform() {
+    local glibc_major
+    local glibc_minor
+    local glibc_version
 
-wheel_dir="$WS/ecc/dist/wheel/repaired"
-latest_wheel="$(ls -1t "$wheel_dir"/ecc-*.whl 2>/dev/null | head -n 1 || true)"
-if [[ -z "$latest_wheel" ]]; then
-    echo "ERROR: no ecc wheel found in $wheel_dir" >&2
-    exit 1
-fi
+    if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+        echo "ERROR: ECOS Studio server development currently requires Linux x86_64 with glibc >= 2.34." >&2
+        echo "The locked uv environment uses pinned manylinux_2_34_x86_64 wheels for ecc-dreamplace and ecc-tools." >&2
+        exit 1
+    fi
 
-stable_wheel="$wheel_dir/ecc-latest.whl"
-ln -sfn "$(basename "$latest_wheel")" "$stable_wheel"
-echo "==> Using ECC wheel: $stable_wheel -> $(basename "$latest_wheel")"
+    glibc_version="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{ print $2 }' || true)"
+    glibc_major="${glibc_version%%.*}"
+    glibc_minor="${glibc_version#*.}"
+    if [[ "$glibc_minor" == "$glibc_version" ]]; then
+        glibc_minor="0"
+    fi
+    glibc_minor="${glibc_minor%%[^0-9]*}"
+    glibc_major="${glibc_major:-0}"
+    glibc_minor="${glibc_minor:-0}"
+
+    if ((glibc_major < 2 || (glibc_major == 2 && glibc_minor < 34))); then
+        echo "ERROR: ECOS Studio server development requires glibc >= 2.34 (detected: ${glibc_version:-unknown})." >&2
+        echo "The pinned ecc-dreamplace and ecc-tools wheels are tagged manylinux_2_34_x86_64." >&2
+        exit 1
+    fi
+}
+
+check_platform
 
 echo "==> Syncing ecos/server venv..."
 uv sync --frozen --all-groups --python 3.11 --project "$WS/ecos/server"
@@ -41,5 +54,4 @@ bazel build //ecos:build_ecos_server
 
 echo ""
 echo "Done."
-echo "  - Prepared wheel: $stable_wheel"
 echo "  - Built target:   //ecos:build_ecos_server"

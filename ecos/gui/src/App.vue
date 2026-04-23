@@ -122,13 +122,43 @@ const RESIZE_IDLE_MS = 180
 let resizeIdleTimer: ReturnType<typeof setTimeout> | undefined
 let unlistenWindowResized: (() => void) | undefined
 
+/**
+ * 快路径检测"这次 resize 是不是奔着最大化去的"。
+ *
+ * `.window-maximized` 的权威来源是 `isMaximized()`，但它是一次 IPC 往返、
+ * 往往要几 ~ 几十 ms 才 resolve。而最大化在屏幕上是瞬时发生的，这段 IPC
+ * 窗口期里 WebKitGTK 的 transparent 已失效（最大化关闭透明），app-container
+ * 的圆角 + 边框又还没被 `.window-maximized` 消掉 —— 圆角/边框位置就露出
+ * 了 webview 的白画布，即用户看到的"最大化白闪"。
+ *
+ * 对策：在 onResized 事件回调里同步读 `window.innerWidth/innerHeight` 与
+ * `screen.availWidth/availHeight` 比较，视口接近铺满屏幕就直接乐观地挂上
+ * `.window-maximized`；随后 `isMaximized()` 的权威结果再由 `syncMaximizedClass`
+ * 做修正。边缘拖拽缩放时启发式判为 false，`.window-maximized` 不挂，透明圆角
+ * 浮岛视觉完整保留。
+ *
+ * `- 2` 的余量是为了兼容某些 WM（KDE / Hyprland 等）把窗口最大化到不含面板
+ * 的工作区时，视口比 availWidth 少 1 ~ 2 px 的 off-by-one。
+ */
+function detectLikelyMaximized(): boolean {
+  if (typeof window === 'undefined' || !window.screen) return false
+  const { availWidth, availHeight } = window.screen
+  if (!availWidth || !availHeight) return false
+  return window.innerWidth >= availWidth - 2 && window.innerHeight >= availHeight - 2
+}
+
 const markResizing = () => {
   isResizing = true
   document.body.classList.add('window-resizing')
   // 广播全局状态，组件（如 HomeView 的 ECharts）可据此跳过昂贵重绘
   setWindowResizing(true)
-  // 立即同步一次最大化状态：最大化发生在 resize 的瞬间，
-  // 如果只在 idle 回调里同步，会有 RESIZE_IDLE_MS 的窗口期露白。
+  // 同步快路径：视口已经铺满屏幕就立刻挂 `.window-maximized`，
+  // 不等 `isMaximized()` IPC 回来，消除最大化瞬间的圆角/边框白闪。
+  if (detectLikelyMaximized()) {
+    document.body.classList.add('window-maximized')
+  }
+  // 随后用权威的 `isMaximized()` 修正快路径可能的误判（例如窗口刚好
+  // 被用户手动拖到接近屏幕尺寸但并没真的 maximize）。
   void syncMaximizedClass()
   if (resizeIdleTimer) clearTimeout(resizeIdleTimer)
   resizeIdleTimer = setTimeout(() => {
@@ -372,6 +402,15 @@ body.window-maximized .app-container {
   z-index: 9999;
 }
 
+/*
+ * 四角 resize 区域需要盖过顶栏按钮，否则用户把鼠标甩到窗口角落时总是
+ * 命中按钮或边缘条、永远碰不到对角 resize —— 这正是"斜拉只能横/纵向"
+ * 那个 bug 的根因。放到更高的 z-index，并且尺寸足够大（16px）让命中
+ * 率更高；但右上角要避开关闭按钮的点击主体，所以刻意只保留与顶栏
+ * `.window-btn-close` 的 border-radius（10px）相当的小三角，不会抢走
+ * 按钮的主要点击区域。
+ */
+
 /* 上边缘（左右留出顶栏按钮/菜单区域，避免与自定义标题栏重叠导致点击被当成 resize） */
 .resize-top {
   top: 0;
@@ -390,57 +429,82 @@ body.window-maximized .app-container {
   cursor: ns-resize;
 }
 
-/* 左边缘 */
+/* 左边缘：从四角 resize 区之后开始，避免和对角 resize 打架 */
 .resize-left {
   left: 0;
-  top: 20px;
-  bottom: 20px;
+  top: 16px;
+  bottom: 16px;
   width: 6px;
   cursor: ew-resize;
 }
 
-/* 右边缘：从顶栏下方开始，避免盖住右侧最小化/最大化/关闭 */
+/* 右边缘：同样让开四角 resize 区 */
 .resize-right {
   right: 0;
-  top: 40px;
-  bottom: 20px;
+  top: 16px;
+  bottom: 16px;
   width: 6px;
   cursor: ew-resize;
 }
 
-/* 左上角：下移避免压住顶栏左侧菜单/图标点击 */
+/*
+ * 左上角：位于窗口真正的左上角。10×10 刚好落在顶栏左侧图标 padding(16px)
+ * 之内，不会挡住 app-icon / 菜单按钮点击。
+ */
 .resize-top-left {
-  top: 40px;
+  top: 0;
   left: 0;
-  width: 20px;
-  height: 20px;
+  width: 10px;
+  height: 10px;
   cursor: nwse-resize;
+  z-index: 10001;
 }
 
-/* 右上角：下移避免压住顶栏右侧窗口控制按钮 */
+/*
+ * 右上角：10×10 刚好落在 `.window-btn-close` border-radius(10px) 的视觉
+ * 圆角之内，那块区域本来视觉上就是透明的，改成 resize 命中区既符合
+ * 用户心理预期，又不影响按钮主要点击区域（46×40）。z-index 高于其他
+ * 边缘条，保证角落优先触发对角 resize。
+ */
 .resize-top-right {
-  top: 40px;
+  top: 0;
   right: 0;
-  width: 20px;
-  height: 20px;
+  width: 10px;
+  height: 10px;
   cursor: nesw-resize;
+  z-index: 10001;
 }
 
 /* 左下角 */
 .resize-bottom-left {
   bottom: 0;
   left: 0;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   cursor: nesw-resize;
+  z-index: 10001;
 }
 
 /* 右下角 */
 .resize-bottom-right {
   bottom: 0;
   right: 0;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   cursor: nwse-resize;
+  z-index: 10001;
+}
+
+/*
+ * 最大化时整体禁用 resize 命中区：
+ * 1. 最大化状态下触发 resizeDragging 会被 WM 立刻取消最大化，体验很糟；
+ * 2. 四角 resize 区（尤其是 `.resize-top-right` 的 10×10）在最大化后会
+ *    占着屏幕最右上角那块像素，和 `.window-btn-close` 贴边后的点击区
+ *    重叠，导致"按键部分可按动部分不全"—— 这正是 WSL 下反馈的问题。
+ * pointer-events:none 让事件直接穿透到下方的按钮，鼠标能准确命中 Close。
+ */
+body.window-maximized .resize-edge,
+body.window-maximized .resize-corner {
+  pointer-events: none;
 }
 </style>

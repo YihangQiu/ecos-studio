@@ -3,10 +3,23 @@
     <!-- 背景装饰 -->
     <div class="bg-grid"></div>
 
-    <!-- ===== Dashboard Grid ===== -->
-    <div class="dashboard-grid">
-
-      <!-- ========== Row 1 Left: Chip Basic Info / Spec ========== -->
+    <!-- ===== Dashboard Splitter ===== -->
+    <Splitter
+      class="dashboard-splitter"
+      layout="vertical"
+      :gutterSize="6"
+      stateKey="home-dashboard-outer"
+      stateStorage="local"
+    >
+      <!-- ================= Row 1: Chip Info | Runtime Monitoring ================= -->
+      <SplitterPanel :size="26" :minSize="10" class="dashboard-row">
+        <Splitter
+          class="dashboard-row-splitter"
+          :gutterSize="6"
+          stateKey="home-dashboard-row1"
+          stateStorage="local"
+        >
+          <SplitterPanel :size="45" :minSize="15" class="dashboard-cell">
       <section class="section-card chip-info-area">
         <div class="section-header">
           <div class="header-icon"><i class="ri-cpu-line"></i></div>
@@ -51,6 +64,9 @@
         </div>
       </section>
 
+          </SplitterPanel>
+
+          <SplitterPanel :size="55" :minSize="15" class="dashboard-cell">
       <!-- ========== Row 1 Right: 运行时监控 ========== -->
       <section class="section-card monitor-area">
         <div class="section-header">
@@ -75,6 +91,19 @@
         </div>
       </section>
 
+          </SplitterPanel>
+        </Splitter>
+      </SplitterPanel>
+
+      <!-- ================= Row 2: Layout | Indicator Analysis ================= -->
+      <SplitterPanel :size="44" :minSize="15" class="dashboard-row">
+        <Splitter
+          class="dashboard-row-splitter"
+          :gutterSize="6"
+          stateKey="home-dashboard-row2"
+          stateStorage="local"
+        >
+          <SplitterPanel :size="45" :minSize="15" class="dashboard-cell">
       <!-- ========== Row 2 Left+Center: Layout Preview ========== -->
       <section ref="layoutSectionRef" :class="['section-card layout-area', { 'is-fullscreen': isLayoutFullscreen }]">
         <div class="section-header">
@@ -105,6 +134,9 @@
         </div>
       </section>
 
+          </SplitterPanel>
+
+          <SplitterPanel :size="55" :minSize="15" class="dashboard-cell">
       <!-- ========== Row 2 Right: 指标分析 ========== -->
       <section class="section-card analysis-area">
         <div class="section-header">
@@ -136,6 +168,19 @@
         </div>
       </section>
 
+          </SplitterPanel>
+        </Splitter>
+      </SplitterPanel>
+
+      <!-- ================= Row 3: Flow Log | Checklist ================= -->
+      <SplitterPanel :size="30" :minSize="10" class="dashboard-row">
+        <Splitter
+          class="dashboard-row-splitter"
+          :gutterSize="6"
+          stateKey="home-dashboard-row3"
+          stateStorage="local"
+        >
+          <SplitterPanel :size="45" :minSize="15" class="dashboard-cell">
       <!-- ========== Row 3 Left: Flow step log ========== -->
       <section class="section-card gds-area">
         <div class="section-header">
@@ -160,6 +205,24 @@
                 <span class="flow-log-step-title">{{ seg.stepName }}</span>
                 <span class="flow-log-step-meta">{{ seg.tool }}</span>
                 <span class="flow-log-step-state" :class="{ 'is-failed': seg.failed }">{{ seg.state }}</span>
+                <button
+                  v-if="seg.truncated"
+                  type="button"
+                  class="flow-log-expand-btn"
+                  :disabled="expandingFlowLogKeys[flowLogStepKey(seg)]"
+                  :title="`Load full log (${formatKb(seg.totalSize)})`"
+                  @click="onExpandFullLog(seg)"
+                >
+                  <i
+                    :class="[
+                      expandingFlowLogKeys[flowLogStepKey(seg)]
+                        ? 'ri-loader-4-line flow-log-expand-btn-spinner'
+                        : 'ri-expand-up-down-line',
+                    ]"
+                  ></i>
+                  <span v-if="expandingFlowLogKeys[flowLogStepKey(seg)]">Loading full log…</span>
+                  <span v-else>Show full log ({{ formatKb(seg.totalSize) }})</span>
+                </button>
               </div>
               <pre
                 class="flow-log-pre"
@@ -185,6 +248,9 @@
         </div>
       </section>
 
+          </SplitterPanel>
+
+          <SplitterPanel :size="55" :minSize="15" class="dashboard-cell">
       <!-- ========== Row 3 Right: Checklist Table ========== -->
       <section class="section-card checklist-area">
         <div class="section-header">
@@ -232,8 +298,10 @@
           </div>
         </div>
       </section>
-
-    </div>
+          </SplitterPanel>
+        </Splitter>
+      </SplitterPanel>
+    </Splitter>
 
     <!-- ===== 图表预览 Lightbox ===== -->
     <Teleport to="body">
@@ -263,6 +331,8 @@ import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import Splitter from 'primevue/splitter'
+import SplitterPanel from 'primevue/splitterpanel'
 import { useParameters } from '@/composables/useParameters'
 import { useHomeData, type AnalysisChartItem, type FlowLogSegment } from '@/composables/useHomeData'
 import { isWindowResizing } from '@/composables/useWindowResizeState'
@@ -280,7 +350,30 @@ const {
   flowLogStepName,
   flowLogError,
   flowLogLoading,
+  expandFlowLogSegment,
 } = useHomeData()
+
+/** 正在展开完整日志的 step key 集合，避免同一步连点多次以及按钮 loading 状态 */
+const expandingFlowLogKeys = reactive<Record<string, boolean>>({})
+
+function formatKb(totalChars: number | undefined): string {
+  if (!totalChars || totalChars <= 0) return '?'
+  const kb = totalChars / 1024
+  if (kb < 1) return `${totalChars} B`
+  if (kb < 1024) return `${Math.round(kb)} KB`
+  return `${(kb / 1024).toFixed(1)} MB`
+}
+
+async function onExpandFullLog(seg: FlowLogSegment): Promise<void> {
+  const key = flowLogStepKey(seg)
+  if (expandingFlowLogKeys[key]) return
+  expandingFlowLogKeys[key] = true
+  try {
+    await expandFlowLogSegment(seg)
+  } finally {
+    expandingFlowLogKeys[key] = false
+  }
+}
 
 const flowLogScrollRef = ref<HTMLElement | null>(null)
 
@@ -331,8 +424,13 @@ watch(
   flowLogSegments,
   async (segs) => {
     const alive = new Set(segs.map((s) => flowLogStepKey(s)))
+    // 清理"已不在当前 plan 中的 step"对应的各类本地 state，
+    // 防止跨 flow 累积无用条目（费用低但数量会一直涨）。
     for (const k of Object.keys(pinFlowLogTail)) {
       if (!alive.has(k)) delete pinFlowLogTail[k]
+    }
+    for (const k of Object.keys(expandingFlowLogKeys)) {
+      if (!alive.has(k)) delete expandingFlowLogKeys[k]
     }
     await nextTick()
     scheduleFlowLogScroll()
@@ -765,10 +863,12 @@ function setupResizeObserver() {
     if (pendingResizeRaf !== null) return
     pendingResizeRaf = requestAnimationFrame(() => {
       pendingResizeRaf = null
-      // 首次获得有效尺寸的容器仍需在此完成 init，否则图表一直是空的
-      if (monitorData.value) initOrUpdateCharts()
-      // 窗口正在缩放时，canvas 让 CSS 拉伸，跳过代价昂贵的逐帧 resize
+      // 窗口正在缩放：完全跳过图表工作。canvas 由 CSS 自然拉伸，
+      // 之前还跑 initOrUpdateCharts 是为了 cover 首次 init，但那个
+      // 新容器也完全可以推迟到 resize 结束后的 watcher 里统一 init，
+      // 省下每帧的 setOption diff（长序列下这个 diff 不便宜）。
       if (isWindowResizing.value) return
+      if (monitorData.value) initOrUpdateCharts()
       resizeAllCharts()
     })
   })
@@ -779,7 +879,8 @@ function setupResizeObserver() {
 }
 
 // 窗口缩放结束的瞬间把所有 canvas 按当前容器尺寸一次性清晰重绘；
-// 拖拽过程中累计的尺寸变化都在这里"补上"。
+// 拖拽过程中累计的尺寸变化都在这里"补上"，顺带 init 在 resize
+// 期间才第一次拿到尺寸的新图表容器。
 watch(isWindowResizing, (resizing) => {
   if (resizing) return
   if (pendingResizeRaf !== null) {
@@ -788,6 +889,7 @@ watch(isWindowResizing, (resizing) => {
   }
   // 使用 rAF 而非同步调用，确保此时布局已稳定
   requestAnimationFrame(() => {
+    if (monitorData.value) initOrUpdateCharts()
     resizeAllCharts()
   })
 })
@@ -908,33 +1010,100 @@ function stateClass(state: string): string {
   pointer-events: none;
 }
 
-/* ==================== Dashboard Grid ==================== */
-.dashboard-grid {
+/* ==================== Dashboard Splitter ==================== */
+.dashboard-splitter {
   position: relative;
   z-index: 1;
   height: 100%;
-  display: grid;
-  grid-template-columns: 1fr 1.2fr;
-  grid-template-rows: auto 1fr 0.7fr;
-  grid-template-areas:
-    "info      monitor"
-    "layout    analysis"
-    "gds       checklist";
-  gap: 8px;
+  width: 100%;
   padding: 8px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-sizing: border-box;
 }
 
-/* Grid Area Assignments */
-.chip-info-area {
-  grid-area: info;
+/*
+ * 行/列面板需要提供一个确定的 block，内部的 section-card 才能 height:100%。
+ * PrimeVue 的 SplitterPanel 默认是 flex 容器，这里显式交代 min 尺寸避免
+ * 内容强行撑开破坏拖拽比例。
+ */
+.dashboard-splitter :deep(.p-splitterpanel.dashboard-row),
+.dashboard-splitter :deep(.p-splitterpanel.dashboard-cell) {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.monitor-area {
-  grid-area: monitor;
+.dashboard-row-splitter {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 
-.layout-area {
-  grid-area: layout;
+/* SplitterPanel 只放一个 section-card，让 card 100% 填满面板 */
+.dashboard-splitter :deep(.p-splitterpanel.dashboard-cell) > .section-card {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+}
+
+/* Splitter 拖拽条：窄、低调，hover 时变为主题色 */
+.dashboard-splitter :deep(.p-splitter-gutter) {
+  background: transparent;
+  position: relative;
+  transition: background 0.15s ease;
+}
+
+.dashboard-splitter :deep(.p-splitter-gutter::after) {
+  content: '';
+  position: absolute;
+  background: var(--border-color);
+  border-radius: 2px;
+  transition: background 0.15s ease;
+}
+
+/* 垂直布局的 gutter 水平条 */
+.dashboard-splitter > :deep(.p-splitter-gutter) {
+  height: 6px;
+}
+.dashboard-splitter > :deep(.p-splitter-gutter::after) {
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 2px;
+  transform: translate(-50%, -50%);
+}
+
+/* 横向行内的 gutter 竖直条 */
+.dashboard-row-splitter > :deep(.p-splitter-gutter) {
+  width: 6px;
+}
+.dashboard-row-splitter > :deep(.p-splitter-gutter::after) {
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 48px;
+  transform: translate(-50%, -50%);
+}
+
+.dashboard-splitter :deep(.p-splitter-gutter:hover),
+.dashboard-splitter :deep(.p-splitter-gutter[data-p-gutter-resizing="true"]) {
+  background: rgba(var(--accent-rgb, 59, 130, 246), 0.08);
+}
+
+.dashboard-splitter :deep(.p-splitter-gutter:hover::after),
+.dashboard-splitter :deep(.p-splitter-gutter[data-p-gutter-resizing="true"]::after) {
+  background: var(--accent-color);
+  box-shadow: 0 0 8px rgba(var(--accent-rgb, 59, 130, 246), 0.45);
+}
+
+.dashboard-splitter :deep(.p-splitter-gutter-handle) {
+  display: none;
 }
 
 .layout-area.is-fullscreen {
@@ -985,17 +1154,8 @@ function stateClass(state: string): string {
 }
 
 .analysis-area {
-  grid-area: analysis;
   position: relative;
   z-index: 2;
-}
-
-.gds-area {
-  grid-area: gds;
-}
-
-.checklist-area {
-  grid-area: checklist;
 }
 
 /* ==================== Section Card 通用样式 ==================== */
@@ -1636,6 +1796,17 @@ html.dark .chart-card:hover {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  /*
+   * 让滚动视口外的日志块进入"虚拟化"：
+   * - content-visibility: auto 告诉浏览器：此元素滚出视口时跳过布局/绘制
+   * - contain-intrinsic-size 给出占位尺寸，避免滚动条抖动
+   *
+   * 日志段通常上百个、每段内部 pre 又可能上千行，没有这项时 resize
+   * 期间每一帧都要对所有可见 + 不可见段做 pre-wrap 重排，是本页最大
+   * 的单点开销。该属性在不支持的 WebKit 上会被忽略，不影响回退行为。
+   */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px;
 }
 
 .flow-log-step-header {
@@ -1673,6 +1844,48 @@ html.dark .chart-card:hover {
   color: #f87171;
   border-color: rgba(248, 113, 113, 0.45);
   background: rgba(248, 113, 113, 0.08);
+}
+
+.flow-log-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  line-height: 1.3;
+}
+
+.flow-log-expand-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: rgba(var(--accent-rgb, 59, 130, 246), 0.45);
+  background: rgba(var(--accent-rgb, 59, 130, 246), 0.08);
+}
+
+.flow-log-expand-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.flow-log-expand-btn i {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.flow-log-expand-btn-spinner {
+  animation: flow-log-expand-spin 900ms linear infinite;
+}
+
+@keyframes flow-log-expand-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .flow-log-step.is-live .flow-log-pre {
@@ -1717,6 +1930,9 @@ html.dark .flow-log-step.is-live .flow-log-pre::after {
   white-space: pre-wrap;
   word-break: break-word;
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
+  /* 把每个 pre 自己的布局/绘制都关在盒子里，上级宽度变化不会反向触发
+     pre 外部的重排，同时也减少浏览器的重排传播开销 */
+  contain: content;
 }
 
 html.dark .flow-log-pre {
@@ -1861,13 +2077,34 @@ html.dark .flow-log-pre {
 .checklist-table-wrap {
   height: 100%;
   overflow: auto;
+  /*
+   * 隔离表格内部重排：窗口宽度变化时 section-card 已经 contain: layout，
+   * 再给滚动容器加一层 contain 能阻止表格列宽重算反向影响卡片自身。
+   */
+  contain: content;
 }
 
 .checklist-table {
   width: 100%;
+  /*
+   * table-layout: fixed —— 列宽仅按首行 <th> 的声明分配，不再逐格测量
+   * 内容。默认的 auto 布局在窗口缩放时会对所有行单元格做 min/max-content
+   * 计算，行数越多越慢。这里配合下面的 th 宽度声明直接锁死列比例。
+   */
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 10px;
+}
+
+.checklist-table thead th:nth-child(1) { width: 22%; }
+.checklist-table thead th:nth-child(2) { width: 18%; }
+.checklist-table thead th:nth-child(3) { width: auto; }
+.checklist-table thead th:nth-child(4) { width: 16%; }
+
+.checklist-table td {
+  /* fixed 布局下超长单元格不会再撑开列宽，统一允许在词内换行避免溢出 */
+  overflow-wrap: anywhere;
 }
 
 .checklist-table thead th {
@@ -2008,12 +2245,34 @@ html.dark .flow-log-pre {
   animation: spin 1s linear infinite;
 }
 
+/*
+ * ==================== 窗口 resize 期间的局部降级 ====================
+ * App.vue 会在 body 上挂 `.window-resizing` class。这里针对本页最重
+ * 的两处重排做额外冻结，停歇 180ms 后自动恢复：
+ *
+ * 1) 日志 pre：`pre-wrap` + 长文本意味着每次宽度变化都要对成千上万行
+ *    重新计算断行位置。切到 `pre` 让文本暂时不换行（由 pre 内部的横向
+ *    滚动承接），彻底跳过文本断行的重排成本。
+ * 2) 指标分析 / layout 预览的图片：image-rendering 降级已由 App.vue
+ *    全局处理；这里只处理本页特有的文本重排热点。
+ */
+.window-resizing .flow-log-pre {
+  white-space: pre !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+}
+
+/*
+ * Checklist 单元格内容在 resize 期间也切回 normal（非 anywhere）——
+ * anywhere 允许的 "任意位置断词" 需要测量每一个字符，缩放帧上代价偏高。
+ */
+.window-resizing .checklist-table td {
+  overflow-wrap: normal !important;
+  word-break: keep-all !important;
+}
+
 /* ==================== 响应式 ==================== */
 @media (max-width: 1200px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
   .info-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -2029,33 +2288,6 @@ html.dark .flow-log-pre {
 }
 
 @media (max-width: 900px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto;
-    grid-template-areas:
-      "info"
-      "monitor"
-      "layout"
-      "analysis"
-      "gds"
-      "checklist";
-    overflow-y: auto;
-  }
-
-  .section-card {
-    min-height: 200px;
-  }
-
-  /*
-   * 单列堆叠模式下 analysis-area 的容器高度被 min-height: 200px 卡死，
-   * 再强行套"2 行"布局会把每行压到 < 40px，指标图片只剩一条细线。
-   * 这里改用 auto-fill，让卡片按最小可读尺寸自然换行，容器高度由内容决定，
-   * 并清掉放大模式下的 nth-child 位置约束，避免换行后列号对不上。
-   */
-  .analysis-area {
-    min-height: 280px;
-  }
-
   .charts-grid {
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
     grid-template-rows: none;

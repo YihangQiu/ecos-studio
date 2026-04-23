@@ -42,8 +42,8 @@
         <i :class="isDark ? 'ri-sun-line' : 'ri-moon-line'" class="text-base"></i>
       </button>
       <!-- 最小化 -->
-      <button @click="handleMinimize" class="window-btn" title="Minimize">
-        <svg width="16" height="16" viewBox="0 0 16 16">
+      <button @click="handleMinimize" class="window-btn" aria-label="Minimize window">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
           <rect x="2" y="5.5" width="8" height="1" fill="currentColor" />
         </svg>
       </button>
@@ -51,7 +51,7 @@
       <button
         @click="handleMaximize"
         class="window-btn"
-        :title="isMaximized ? 'Restore' : 'Maximize'"
+        :aria-label="isMaximized ? 'Restore window' : 'Maximize window'"
       >
         <!-- 最大化：单框 -->
         <svg v-if="!isMaximized" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
@@ -64,8 +64,8 @@
         </svg>
       </button>
       <!-- 关闭 -->
-      <button @click="handleClose" class="window-btn window-btn-close" title="Close">
-        <svg width="16" height="16" viewBox="0 0 16 16">
+      <button @click="handleClose" class="window-btn window-btn-close" aria-label="Close window">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         </svg>
       </button>
@@ -509,6 +509,22 @@ const handleMouseDown = async (event: MouseEvent) => {
 .window-btn-close:hover {
   background: #e81163;
   color: white;
+}
+
+/*
+ * 最大化时贴边：
+ * 窗口最大化后 `.app-container` 已经去掉圆角（见 App.vue 里的
+ * `body.window-maximized .app-container`），但顶栏自身和关闭按钮的圆角
+ * 仍然存在，导致右上角被"削"掉一块 —— 用户按费茨定律把鼠标甩到屏幕
+ * 最右上角时，那块视觉透明区域让按钮看起来点不到。最大化时一并去掉
+ * 这两处圆角，让关闭按钮正好贴到屏幕右上角像素。
+ */
+body.window-maximized .topbar {
+  border-radius: 0;
+}
+
+body.window-maximized .window-btn-close {
+  border-radius: 0;
 }
 
 /* 响应式：在小屏幕上隐藏中间的项目名称 */

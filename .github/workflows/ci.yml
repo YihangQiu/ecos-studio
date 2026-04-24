@@ -1,0 +1,188 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-version:
+    name: Check Version Consistency
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check version
+        uses: ./.github/actions/check-version
+
+  ruff:
+    name: Ruff
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ecos/server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Check formatting
+        run: uvx ruff format --check
+
+      - name: Lint Python
+        run: uvx ruff check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ecos/gui/src-tauri
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        uses: ./.github/actions/install-tauri-linux-deps
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          cache-targets: "false"
+
+      - name: Lint Rust
+        env:
+          TAURI_CONFIG: '{"build":{"frontendDist":null},"bundle":{"resources":null,"externalBin":null}}'
+        run: cargo clippy -- -D warnings
+
+  vue-tsc:
+    name: Vue Typecheck
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ecos/gui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck Vue
+        run: pnpm exec vue-tsc --noEmit
+
+  build-appimage:
+    name: Build AppImage
+    needs: [check-version, ruff, clippy, vue-tsc]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        uses: ./.github/actions/install-tauri-linux-deps
+        with:
+          extra-packages: >-
+            git curl ca-certificates build-essential pkg-config
+            python3 python3-venv python3-pip python3-dev
+            libgtk-3-bin libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev
+            libglib2.0-dev libglib2.0-bin
+            cmake ninja-build tcl-dev
+            libgflags-dev libgoogle-glog-dev libboost-all-dev libgtest-dev
+            flex libeigen3-dev libunwind-dev libmetis-dev libgmp-dev bison
+            libhwloc-dev libcurl4-openssl-dev libtbb-dev
+            patchelf jq wget
+
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-cache
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+          enable-cache: true
+
+      - name: Setup Bazel
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://github.com/bazelbuild/bazel/releases/download/8.5.0/bazel-8.5.0-linux-x86_64 \
+            -o "$HOME/.local/bin/bazel"
+          chmod +x "$HOME/.local/bin/bazel"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Sync server environment
+        working-directory: ecos/server
+        run: uv sync --frozen --all-groups --all-extras --python 3.11
+
+      - name: Build release bundle
+        env:
+          ENABLE_OSS_CAD_SUITE: "true"
+          TAURI_BUNDLES: appimage
+        run: |
+          PATH="$PWD/ecos/server/.venv/bin:$PATH" bazel build //:ecos_studio_bundle
+
+      - name: Verify AppImage artifact
+        run: |
+          BUNDLE_TAR="bazel-bin/ecos/ecos_studio_bundle/ecos_studio_bundle.tar"
+          rm -rf dist/ci-appimage
+          mkdir -p dist/ci-appimage
+
+          tar -tf "$BUNDLE_TAR" | grep -E '(^|/)[^/]+\.AppImage$' > /tmp/ecos-appimage-files.txt || true
+
+          if [ ! -s /tmp/ecos-appimage-files.txt ]; then
+            echo "ERROR: AppImage artifact not found in $BUNDLE_TAR" >&2
+            echo "Bundle contents:" >&2
+            tar -tf "$BUNDLE_TAR" | sed -n '1,200p' >&2
+            exit 1
+          fi
+
+          echo "Found AppImage artifact:"
+          cat /tmp/ecos-appimage-files.txt
+
+          tar -xf "$BUNDLE_TAR" -C dist/ci-appimage -T /tmp/ecos-appimage-files.txt
+          (
+            cd dist/ci-appimage
+            find . -type f -name '*.AppImage' -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+          )
+
+          echo "Prepared CI AppImage artifact:"
+          find dist/ci-appimage -type f \( -name '*.AppImage' -o -name 'SHA256SUMS' \) | sort
+          echo ""
+          cat dist/ci-appimage/SHA256SUMS
+
+      - name: Upload CI AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecos-studio-appimage-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/ci-appimage/**/*.AppImage
+            dist/ci-appimage/SHA256SUMS

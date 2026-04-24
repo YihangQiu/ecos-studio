@@ -1,0 +1,31 @@
+name: Check ECOS Studio Version Consistency
+description: Verify release version fields across MODULE.bazel, ecos-server, and ecos-studio. Optionally verify an expected git tag.
+
+inputs:
+  expected_tag:
+    description: Expected tag (for example, v0.1.0-alpha.3). If set, also verify the tag matches the detected version.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: The repository release version detected from MODULE.bazel.
+    value: ${{ steps.verify.outputs.version }}
+  tag:
+    description: The git tag corresponding to the detected version.
+    value: ${{ steps.verify.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Verify version consistency
+      id: verify
+      shell: bash
+      run: python3 .github/scripts/check-version.py
+      env:
+        EXPECTED_TAG: ${{ inputs.expected_tag }}

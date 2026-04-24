@@ -140,21 +140,49 @@ onUnmounted(() => {
 }
 
 :deep(.p-splitter) {
+  display: flex;
+  flex-wrap: nowrap;
+  min-width: 0;
+  min-height: 0;
   background: transparent;
   border: none;
   /* layout only; avoid paint containment on panels (conflicts with wide tables + scrollbars in WebKitGTK) */
   contain: layout;
 }
 
+:deep(.p-splitter.p-splitter-vertical) {
+  flex-direction: column;
+}
+
 /*
- * index.css 对 .p-splitter-panel 使用了 contain: layout style paint；
+ * index.css 对 .p-splitterpanel 使用了 contain: layout style paint；
  * 在部分 WebKit/GTK 下与宽图/替换元素组合时，会误参与祖先的 min-content 宽度。
  * 在此用更高优先级只保留 style containment，避免横向把整行撑出视口。
  */
-:deep(.p-splitter-panel) {
+:deep(.p-splitterpanel) {
+  display: flex;
+  flex-grow: 1;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   contain: style;
+}
+
+:deep(.p-splitterpanel-nested) {
+  display: flex;
+}
+
+:deep(.p-splitterpanel > *) {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+:deep(.p-splitterpanel .p-splitter) {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  border: 0 none;
 }
 
 :deep(.p-splitter-gutter) {
@@ -193,14 +221,14 @@ onUnmounted(() => {
  * Right Chat/Inspector: PrimeVue sets flex-basis; theme often uses flex:1 with flex-shrink 1.
  * Wide Floorplan tables have huge min-content and shrink this column; !important prevents flex-shrink.
  */
-:deep(.p-splitter-panel.chat-panel) {
+:deep(.p-splitterpanel.chat-panel) {
   box-sizing: border-box;
   flex-grow: 0 !important;
   flex-shrink: 0 !important;
 }
 
 /* Fill column width; avoid subtree content width affecting parent flex */
-:deep(.chat-panel.p-splitter-panel > *) {
+:deep(.chat-panel.p-splitterpanel > *) {
   min-width: 0;
   width: 100%;
   max-width: 100%;

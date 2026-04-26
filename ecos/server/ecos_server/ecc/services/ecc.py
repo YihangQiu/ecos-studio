@@ -1,8 +1,15 @@
 #!/usr/bin/env python
+import json
 import logging
 import os
+import re
+import shutil
+import threading
 import time
+import uuid
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from ..schemas import (
     CMDEnum,
@@ -15,6 +22,33 @@ from ..sse import server_notify
 gui_notify = server_notify()
 
 logger = logging.getLogger(__name__)
+
+_TEXT_ARTIFACT_LIMIT = 120_000
+_FOUNDATION_DIR = Path("foundation_data") / "ecc"
+_TASKS: dict[str, dict] = {}
+_TASKS_LOCK = threading.Lock()
+_WORKSPACE_LOCKS: dict[str, threading.Lock] = {}
+_WORKSPACE_LOCKS_LOCK = threading.Lock()
+_SECRET_PATTERNS = [
+    re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s,;]+)"),
+]
+_ALLOWED_PARAMETER_PATHS = {
+    "Core.Utilitization",
+    "Core.Margin",
+    "Core.Aspect ratio",
+    "Target density",
+    "Target overflow",
+    "Max fanout",
+    "Global right padding",
+    "Cell padding x",
+    "Routability opt flag",
+    "Frequency max [MHz]",
+    "Bottom layer",
+    "Top layer",
+}
+_PARAMETER_ALIASES = {
+    "Core.Utilization": "Core.Utilitization",
+}
 
 
 def _summarize_request(data: object) -> dict:
@@ -143,6 +177,426 @@ class ECCService:
         if engine_flow.is_flow_success():
             return
         engine_flow.create_step_workspaces()
+
+    def _workspace_dir_from_request(self, data: dict) -> Path:
+        directory = str(data.get("directory") or data.get("workspace_id") or "").strip()
+        if directory:
+            return Path(directory).expanduser().resolve()
+        if self.workspace is not None:
+            return Path(self.workspace.directory).expanduser().resolve()
+        raise ValueError("missing workspace directory")
+
+    @staticmethod
+    def _ensure_workspace_file(workspace_dir: Path, relative_path: str) -> Path:
+        rel = str(relative_path or "").strip()
+        if not rel:
+            raise ValueError("missing artifact path")
+        candidate = Path(rel).expanduser()
+        path = candidate.resolve() if candidate.is_absolute() else (workspace_dir / candidate).resolve()
+        if not path.is_relative_to(workspace_dir):
+            raise ValueError(f"path is outside workspace: {relative_path}")
+        return path
+
+    @staticmethod
+    def _read_json(path: Path) -> dict:
+        if not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    @staticmethod
+    def _write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _redact_text(content: str) -> str:
+        redacted = content
+        for pattern in _SECRET_PATTERNS:
+            redacted = pattern.sub(lambda m: f"{m.group(1)}=<redacted>", redacted)
+        return redacted
+
+    @staticmethod
+    def _manifest_path(workspace_dir: Path) -> Path:
+        return workspace_dir / _FOUNDATION_DIR / "manifest.json"
+
+    @staticmethod
+    def _source_signature(paths: list[Path]) -> dict[str, float]:
+        signature: dict[str, float] = {}
+        for path in paths:
+            if path.exists():
+                signature[str(path)] = path.stat().st_mtime
+        return signature
+
+    def _foundation_sources(self, workspace_dir: Path) -> list[Path]:
+        sources = [workspace_dir / "home" / "flow.json", workspace_dir / "home" / "parameters.json"]
+        sources.extend(sorted(workspace_dir.glob("*/analysis/*.json")))
+        sources.extend(sorted(workspace_dir.glob("*/checklist.json")))
+        return sources
+
+    def _foundation_payload(self, workspace_dir: Path) -> dict:
+        flow = self._read_json(workspace_dir / "home" / "flow.json")
+        parameters = self._read_json(workspace_dir / "home" / "parameters.json")
+        metrics: dict[str, dict] = {}
+        for metric_path in sorted(workspace_dir.glob("*/analysis/*.json")):
+            step = metric_path.parent.parent.name
+            metrics[step] = self._read_json(metric_path)
+        checklist: dict[str, dict] = {}
+        for checklist_path in sorted(workspace_dir.glob("*/checklist.json")):
+            checklist[checklist_path.parent.name] = self._read_json(checklist_path)
+        return {
+            "workspace": str(workspace_dir),
+            "flow": flow,
+            "parameters": parameters,
+            "metrics": metrics,
+            "checklist": checklist,
+        }
+
+    def _foundation_is_stale(self, workspace_dir: Path, manifest: dict) -> bool:
+        recorded = manifest.get("sources", {}) if isinstance(manifest, dict) else {}
+        return recorded != self._source_signature(self._foundation_sources(workspace_dir))
+
+    def _task_snapshot(self, workspace_dir: Path | None = None) -> list[dict]:
+        with _TASKS_LOCK:
+            tasks = [dict(task) for task in _TASKS.values()]
+        if workspace_dir is None:
+            return tasks
+        return [task for task in tasks if task.get("workspace") == str(workspace_dir)]
+
+    @staticmethod
+    def _workspace_lock(workspace_dir: Path) -> threading.Lock:
+        key = str(workspace_dir)
+        with _WORKSPACE_LOCKS_LOCK:
+            if key not in _WORKSPACE_LOCKS:
+                _WORKSPACE_LOCKS[key] = threading.Lock()
+            return _WORKSPACE_LOCKS[key]
+
+    @staticmethod
+    def _set_nested_parameter(parameters: dict, dotted_path: str, value) -> None:
+        parts = dotted_path.split(".")
+        cursor = parameters
+        for part in parts[:-1]:
+            child = cursor.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                cursor[part] = child
+            cursor = child
+        cursor[parts[-1]] = value
+
+    def _flatten_parameter_updates(self, payload: dict, prefix: str = "") -> dict[str, object]:
+        flattened: dict[str, object] = {}
+        for key, value in payload.items():
+            full_key = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(value, dict):
+                flattened.update(self._flatten_parameter_updates(value, full_key))
+            else:
+                flattened[full_key] = value
+        return flattened
+
+    def get_flow_status(self, request: ECCRequest) -> ECCResponse:
+        data = request.data
+        try:
+            workspace_dir = self._workspace_dir_from_request(data)
+            flow = self._read_json(workspace_dir / "home" / "flow.json")
+            manifest = self._read_json(self._manifest_path(workspace_dir))
+            response_data = {
+                "directory": str(workspace_dir),
+                "flow": flow,
+                "steps": flow.get("steps", []),
+                "foundation_stale": self._foundation_is_stale(workspace_dir, manifest) if manifest else True,
+                "tasks": self._task_snapshot(workspace_dir),
+            }
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.success.value,
+            data=response_data,
+            message=[f"flow status loaded: {workspace_dir}"],
+        )
+
+    def get_artifact(self, request: ECCRequest) -> ECCResponse:
+        data = request.data
+        try:
+            workspace_dir = self._workspace_dir_from_request(data)
+            path = self._ensure_workspace_file(workspace_dir, str(data.get("path", "")))
+            if not path.exists() or not path.is_file():
+                return ECCResponse(
+                    cmd=request.cmd,
+                    response=ResponseEnum.failed.value,
+                    data={"path": str(path)},
+                    message=[f"artifact not found: {path}"],
+                )
+            raw = path.read_bytes()
+            try:
+                content = raw[: _TEXT_ARTIFACT_LIMIT + 1].decode("utf-8")
+                binary = False
+            except UnicodeDecodeError:
+                content = ""
+                binary = True
+            truncated = len(raw) > _TEXT_ARTIFACT_LIMIT
+            if truncated and content:
+                content = content[:_TEXT_ARTIFACT_LIMIT]
+            response_data = {
+                "path": str(path),
+                "relative_path": str(path.relative_to(workspace_dir)),
+                "binary": binary,
+                "truncated": truncated,
+                "size_bytes": len(raw),
+                "content": self._redact_text(content),
+            }
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.success.value,
+            data=response_data,
+            message=[f"artifact loaded: {response_data['relative_path']}"],
+        )
+
+    def extract_foundation_data(self, request: ECCRequest) -> ECCResponse:
+        try:
+            workspace_dir = self._workspace_dir_from_request(request.data)
+            foundation_dir = workspace_dir / _FOUNDATION_DIR
+            payload = self._foundation_payload(workspace_dir)
+            sources = self._foundation_sources(workspace_dir)
+            manifest = {
+                "version": 1,
+                "workspace": str(workspace_dir),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "sources": self._source_signature(sources),
+                "artifacts": {
+                    "summary": str(foundation_dir / "summary.json"),
+                    "metrics": str(foundation_dir / "metrics.json"),
+                },
+            }
+            self._write_json(foundation_dir / "summary.json", payload)
+            self._write_json(foundation_dir / "metrics.json", {"metrics": payload["metrics"]})
+            self._write_json(foundation_dir / "parameters.json", {"parameters": payload["parameters"]})
+            self._write_json(self._manifest_path(workspace_dir), manifest)
+            data = {
+                "directory": str(workspace_dir),
+                "foundation_dir": str(foundation_dir),
+                "manifest_path": str(self._manifest_path(workspace_dir)),
+                "stale": False,
+                "summary": payload,
+            }
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.success.value,
+            data=data,
+            message=[f"foundation data extracted: {workspace_dir}"],
+        )
+
+    def get_foundation_data(self, request: ECCRequest) -> ECCResponse:
+        try:
+            workspace_dir = self._workspace_dir_from_request(request.data)
+            manifest_path = self._manifest_path(workspace_dir)
+            manifest = self._read_json(manifest_path)
+            kind = str(request.data.get("kind", "summary")).strip().lower() or "summary"
+            target = workspace_dir / _FOUNDATION_DIR / f"{kind}.json"
+            payload = self._read_json(target)
+            stale = self._foundation_is_stale(workspace_dir, manifest) if manifest else True
+            data = {
+                "directory": str(workspace_dir),
+                "kind": kind,
+                "manifest": manifest,
+                "manifest_path": str(manifest_path),
+                "stale": stale,
+                "content": payload,
+            }
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.warning.value if data["stale"] else ResponseEnum.success.value,
+            data=data,
+            message=[f"foundation data {'stale' if data['stale'] else 'current'}: {workspace_dir}"],
+        )
+
+    def clone_workspace(self, request: ECCRequest) -> ECCResponse:
+        data = request.data
+        try:
+            source_dir = self._workspace_dir_from_request(data)
+            target = str(data.get("target_directory") or data.get("target") or "").strip()
+            if not target:
+                target_dir = source_dir.parent / f"{source_dir.name}-agent-{uuid.uuid4().hex[:8]}"
+            else:
+                target_dir = Path(target).expanduser().resolve()
+            if target_dir.exists():
+                return ECCResponse(
+                    cmd=request.cmd,
+                    response=ResponseEnum.failed.value,
+                    data={"source": str(source_dir), "target": str(target_dir)},
+                    message=[f"target workspace already exists: {target_dir}"],
+                )
+            shutil.copytree(source_dir, target_dir, ignore=shutil.ignore_patterns("foundation_data/ecc"))
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.success.value,
+            data={"source": str(source_dir), "target": str(target_dir), "workspace_id": str(target_dir)},
+            message=[f"workspace cloned: {target_dir}"],
+        )
+
+    def _run_from_step_worker(self, task_id: str, workspace_dir: Path, start_step: str, rerun: bool) -> None:
+        def update(**fields) -> None:
+            with _TASKS_LOCK:
+                _TASKS[task_id] = {**_TASKS.get(task_id, {}), **fields, "updated_at": datetime.now(timezone.utc).isoformat()}
+
+        lock = self._workspace_lock(workspace_dir)
+        if not lock.acquire(blocking=False):
+            update(status="failed", error="workspace is locked by another run")
+            return
+        try:
+            update(status="running")
+            service = ECCService()
+            load = service.load_workspace(ECCRequest(cmd="load_workspace", data={"directory": str(workspace_dir)}))
+            if load.response != ResponseEnum.success.value:
+                update(status="failed", error="; ".join(load.message))
+                return
+            steps = [s.name for s in service.engine_flow.workspace_steps]
+            if start_step not in steps:
+                update(status="failed", error=f"unknown step: {start_step}")
+                return
+            for step in steps[steps.index(start_step) :]:
+                update(current_step=step)
+                gui_notify.notify_to(
+                    str(workspace_dir),
+                    ECCResponse(
+                        cmd=CMDEnum.notify.value,
+                        response=ResponseEnum.success.value,
+                        data={"type": "flow_progress", "task_id": task_id, "step": step, "status": "running"},
+                        message=[f"running {step}"],
+                    ),
+                )
+                result = service.run_step(ECCRequest(cmd="run_step", data={"step": step, "rerun": rerun}))
+                if result.response != ResponseEnum.success.value:
+                    update(status="failed", current_step=step, result=result.model_dump(), error="; ".join(result.message))
+                    return
+            update(status="success", current_step="", error="", completed_at=datetime.now(timezone.utc).isoformat())
+        except Exception as exc:
+            logger.exception("run_from_step: background worker failed")
+            update(status="error", error=str(exc))
+        finally:
+            lock.release()
+
+    def run_from_step(self, request: ECCRequest) -> ECCResponse:
+        try:
+            workspace_dir = self._workspace_dir_from_request(request.data)
+            step = str(request.data.get("step") or "").strip()
+            if not step:
+                raise ValueError("missing step")
+            task_id = uuid.uuid4().hex
+            task = {
+                "task_id": task_id,
+                "workspace": str(workspace_dir),
+                "start_step": step,
+                "current_step": "",
+                "status": "queued",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "error": "",
+            }
+            with _TASKS_LOCK:
+                _TASKS[task_id] = task
+            thread = threading.Thread(
+                target=self._run_from_step_worker,
+                args=(task_id, workspace_dir, step, bool(request.data.get("rerun", True))),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.success.value,
+            data=task,
+            message=[f"run_from_step queued: {task_id}"],
+        )
+
+    def update_parameters(self, request: ECCRequest) -> ECCResponse:
+        try:
+            workspace_dir = self._workspace_dir_from_request(request.data)
+            raw_updates = request.data.get("parameters", {})
+            if not isinstance(raw_updates, dict):
+                raise ValueError("parameters must be a dict")
+            flattened = self._flatten_parameter_updates(raw_updates)
+            accepted: dict[str, object] = {}
+            rejected: dict[str, object] = {}
+            for key, value in flattened.items():
+                canonical = _PARAMETER_ALIASES.get(key, key)
+                if canonical in _ALLOWED_PARAMETER_PATHS:
+                    accepted[canonical] = value
+                else:
+                    rejected[key] = value
+            params_path = workspace_dir / "home" / "parameters.json"
+            params = self._read_json(params_path)
+            for key, value in accepted.items():
+                self._set_nested_parameter(params, key, value)
+            write = bool(request.data.get("write", True))
+            if write and accepted:
+                self._write_json(params_path, params)
+            data = {
+                "directory": str(workspace_dir),
+                "updated": accepted,
+                "rejected": rejected,
+                "write": write,
+                "parameters_path": str(params_path),
+            }
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.warning.value if data["rejected"] else ResponseEnum.success.value,
+            data=data,
+            message=[f"updated parameters: {len(data['updated'])}; rejected: {len(data['rejected'])}"],
+        )
+
+    def update_step_config(self, request: ECCRequest) -> ECCResponse:
+        try:
+            workspace_dir = self._workspace_dir_from_request(request.data)
+            step = str(request.data.get("step") or "").strip()
+            config = request.data.get("config", {})
+            if not step:
+                raise ValueError("missing step")
+            if not isinstance(config, dict):
+                raise ValueError("config must be a dict")
+            audit_path = workspace_dir / "home" / "strategy_overrides.json"
+            audit = self._read_json(audit_path) or {"overrides": []}
+            overrides = audit.get("overrides", [])
+            if not isinstance(overrides, list):
+                overrides = []
+            overrides.append(
+                {
+                    "step": step,
+                    "config": config,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "effective_on_next_run": False,
+                }
+            )
+            audit["overrides"] = overrides
+            self._write_json(audit_path, audit)
+            data = {
+                "directory": str(workspace_dir),
+                "step": step,
+                "audit_path": str(audit_path),
+                "effective_on_next_run": False,
+            }
+        except Exception as e:
+            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+        return ECCResponse(
+            cmd=request.cmd,
+            response=ResponseEnum.success.value,
+            data=data,
+            message=[f"step config override recorded for audit only: {step}"],
+        )
 
     def create_workspace(self, request: ECCRequest) -> ECCResponse:
         """

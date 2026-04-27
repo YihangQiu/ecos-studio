@@ -56,8 +56,9 @@
             </div>
           </div>
 
-          <button @click="handleSubmit" class="send-btn" :class="{ 'send-btn-active': inputValue.trim() }">
-            <i class="ri-send-plane-2-fill"></i>
+          <button @click="handleSubmit" class="send-btn" :class="{ 'send-btn-active': inputValue.trim() }"
+            :disabled="isSending">
+            <i :class="isSending ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-2-fill'"></i>
           </button>
         </div>
       </div>
@@ -69,12 +70,22 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated } from 'vue'
 import MessageItem from './MessageItem.vue'
 import { useMessageStore } from '../stores/messageStore'
+import { createAgentSSEClient, sendAgentChat, type AgentSSEClient } from '../api/agent'
+import { useCurrentStage } from '../composables/useCurrentStage'
+import { useWorkspace } from '../composables/useWorkspace'
 
 const messageStore = useMessageStore()
 const { messages } = messageStore
 
 const inputValue = ref('')
 const scrollContainerRef = ref<HTMLDivElement | null>(null)
+const isSending = ref(false)
+const sessionId = `ecos_gui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+const agentEventsText = ref('')
+let agentSSEClient: AgentSSEClient | null = null
+
+const { currentProject } = useWorkspace()
+const { currentStage } = useCurrentStage()
 
 // 模式选择器相关
 const modeSelectRef = ref<HTMLDivElement | null>(null)
@@ -112,10 +123,23 @@ const handleClickOutside = (e: MouseEvent) => {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
+  agentSSEClient = createAgentSSEClient(sessionId)
+  agentSSEClient.onEvent((event) => {
+    if (event.type === 'error') {
+      console.warn('[agent-sse]', event.message)
+      return
+    }
+    if (event.message) {
+      agentEventsText.value = `${agentEventsText.value}\n[${event.stage || event.type}] ${event.message}`.trim()
+    }
+  })
+  agentSSEClient.connect()
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  agentSSEClient?.close()
+  agentSSEClient = null
 })
 
 // Near-bottom 阈值（像素）
@@ -187,11 +211,40 @@ watch(() => messages.length, () => {
   scrollToBottomIfNeeded(true)
 })
 
-const handleSubmit = () => {
-  if (inputValue.value.trim()) {
-    messageStore.addMessage(inputValue.value)
-    inputValue.value = ''
-    // TODO: 集成实际的 AI Agent 逻辑
+const handleSubmit = async () => {
+  const content = inputValue.value.trim()
+  if (!content || isSending.value) {
+    return
+  }
+
+  messageStore.addMessage(content)
+  inputValue.value = ''
+  agentEventsText.value = ''
+  const assistantId = messageStore.addAssistantMessage('Thinking...', 'loading')
+  isSending.value = true
+
+  try {
+    const response = await sendAgentChat({
+      message: content,
+      session_id: sessionId,
+      workspace_id: currentProject.value?.path || '',
+      active_step: currentStage.value,
+      mode: currentModeId.value,
+      stream: false,
+    })
+    const progress = agentEventsText.value ? `${agentEventsText.value}\n\n` : ''
+    messageStore.updateMessage(assistantId, {
+      content: `${progress}${response.reply}`,
+      status: 'done',
+    })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    messageStore.updateMessage(assistantId, {
+      content: `Agent API unavailable. Please start the agent with \`edabot serve\` and retry.\n\n${detail}`,
+      status: 'error',
+    })
+  } finally {
+    isSending.value = false
   }
 }
 

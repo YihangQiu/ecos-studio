@@ -29,6 +29,17 @@ export {
 } from './flow'
 
 export {
+  AGENT_BASE_URL,
+  checkAgentHealth,
+  createAgentSSEClient,
+  sendAgentChat,
+  type AgentChatRequest,
+  type AgentChatResponse,
+  type AgentEvent,
+  type AgentSSEClient
+} from './agent'
+
+export {
   createSSEClient,
   type SSEClient,
   type ECCResponse,

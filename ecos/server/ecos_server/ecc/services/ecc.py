@@ -50,6 +50,36 @@ _ALLOWED_PARAMETER_PATHS = {
 _PARAMETER_ALIASES = {
     "Core.Utilization": "Core.Utilitization",
 }
+_ALLOWED_STEP_CONFIG_PATHS = {
+    "place": {
+        "PL.is_timing_effort",
+        "PL.is_congestion_effort",
+        "PL.GP.global_right_padding",
+        "PL.GP.Density.target_density",
+        "PL.GP.Density.bin_cnt_x",
+        "PL.GP.Density.bin_cnt_y",
+        "PL.GP.Nesterov.target_overflow",
+        "PL.GP.Nesterov.max_iter",
+        "PL.BUFFER.max_buffer_num",
+        "PL.LG.global_right_padding",
+        "PL.DP.global_right_padding",
+    },
+    "CTS": {
+        "skew_bound",
+        "max_buf_tran",
+        "max_sink_tran",
+        "max_fanout",
+        "cluster_size",
+        "routing_layer",
+        "root_buffer_required",
+        "break_long_wire",
+    },
+    "route": {
+        "RT.-thread_number",
+        "RT.-enable_timing",
+        "RT.-bottom_routing_layer",
+    },
+}
 _STALE_STEP_DIR_NAMES = (
     "output",
     "log",
@@ -325,6 +355,16 @@ class ECCService:
         return flattened
 
     @staticmethod
+    def _allowed_step_config_paths(step: str) -> set[str]:
+        if step in _ALLOWED_STEP_CONFIG_PATHS:
+            return _ALLOWED_STEP_CONFIG_PATHS[step]
+        lowered = step.lower()
+        for name, paths in _ALLOWED_STEP_CONFIG_PATHS.items():
+            if name.lower() == lowered:
+                return paths
+        return set()
+
+    @staticmethod
     def _step_workspace_dir(workspace_dir: Path, name: str, tool: str) -> Path:
         suffix = "yosys" if tool == "yosys" else tool
         return workspace_dir / f"{name}_{suffix}"
@@ -371,8 +411,7 @@ class ECCService:
                         elif path.is_dir():
                             with contextlib.suppress(OSError):
                                 path.rmdir()
-                    with contextlib.suppress(OSError):
-                        target.rmdir()
+                target.mkdir(parents=True, exist_ok=True)
             for filename in _STALE_STEP_FILE_NAMES:
                 target = step_dir / filename
                 if target.exists() and target.is_file():
@@ -649,29 +688,56 @@ class ECCService:
         try:
             workspace_dir = self._workspace_dir_from_request(request.data)
             step = str(request.data.get("step") or "").strip()
-            config = request.data.get("config", {})
+            config = request.data.get("config", request.data.get("patch", {}))
             if not step:
                 raise ValueError("missing step")
             if not isinstance(config, dict):
                 raise ValueError("config must be a dict")
+            flattened = self._flatten_parameter_updates(config)
+            allowed_paths = self._allowed_step_config_paths(step)
+            accepted = {key: value for key, value in flattened.items() if key in allowed_paths}
+            rejected = {key: value for key, value in flattened.items() if key not in allowed_paths}
+            if rejected:
+                return ECCResponse(
+                    cmd=request.cmd,
+                    response=ResponseEnum.failed.value,
+                    data={
+                        "directory": str(workspace_dir),
+                        "step": step,
+                        "updated": {},
+                        "rejected": rejected,
+                        "effective_on_next_run": False,
+                    },
+                    message=[f"rejected non-whitelisted step config paths: {', '.join(sorted(rejected))}"],
+                )
             audit_path = workspace_dir / "home" / "strategy_overrides.json"
-            audit = self._read_json(audit_path) or {"overrides": []}
+            audit = self._read_json(audit_path) or {"version": 1, "overrides": []}
             overrides = audit.get("overrides", [])
             if not isinstance(overrides, list):
                 overrides = []
-            overrides.append(
-                {
+            reason = str(request.data.get("reason", "")).strip()
+            created_at = datetime.now(timezone.utc).isoformat()
+            for path, value in accepted.items():
+                entry = {
                     "step": step,
-                    "config": config,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "tool": "ecc",
+                    "path": path,
+                    "value": value,
+                    "created_at": created_at,
                     "effective_on_next_run": False,
                 }
-            )
+                if reason:
+                    entry["reason"] = reason
+                overrides.append(entry)
+            audit["version"] = audit.get("version", 1)
             audit["overrides"] = overrides
-            self._write_json(audit_path, audit)
+            if accepted:
+                self._write_json(audit_path, audit)
             data = {
                 "directory": str(workspace_dir),
                 "step": step,
+                "updated": accepted,
+                "rejected": rejected,
                 "audit_path": str(audit_path),
                 "effective_on_next_run": False,
             }

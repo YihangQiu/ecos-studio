@@ -93,13 +93,28 @@ def test_update_step_config_writes_audit_only(tmp_path: Path):
     response = service.update_step_config(
         ECCRequest(
             cmd="update_step_config",
-            data={"directory": str(ws), "step": "place", "config": {"density": 0.6}},
+            data={"directory": str(ws), "step": "place", "config": {"PL.GP.Density.target_density": 0.6}},
         )
     )
     assert response.response == ResponseEnum.success.value
     assert response.data["effective_on_next_run"] is False
     audit = json.loads((ws / "home" / "strategy_overrides.json").read_text(encoding="utf-8"))
     assert audit["overrides"][-1]["step"] == "place"
+    assert audit["overrides"][-1]["path"] == "PL.GP.Density.target_density"
+
+
+def test_update_step_config_rejects_non_whitelisted_paths(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.update_step_config(
+        ECCRequest(
+            cmd="update_step_config",
+            data={"directory": str(ws), "step": "place", "config": {"note": "not a real ECOS config path"}},
+        )
+    )
+    assert response.response == ResponseEnum.failed.value
+    assert response.data["rejected"] == {"note": "not a real ECOS config path"}
+    assert not (ws / "home" / "strategy_overrides.json").exists()
 
 
 def test_cleanup_stale_outputs_removes_step_and_downstream_artifacts(tmp_path: Path):
@@ -132,4 +147,8 @@ def test_cleanup_stale_outputs_removes_step_and_downstream_artifacts(tmp_path: P
     assert "place_dreamplace/analysis/old.json" in removed
     assert "CTS_ecc/output/old.def" in removed
     assert "CTS_ecc/log/old.log" in removed
+    assert (ws / "place_dreamplace" / "output").is_dir()
+    assert (ws / "place_dreamplace" / "analysis").is_dir()
+    assert (ws / "CTS_ecc" / "output").is_dir()
+    assert (ws / "CTS_ecc" / "log").is_dir()
     assert (ws / "place_dreamplace" / "config" / "keep.json").exists()

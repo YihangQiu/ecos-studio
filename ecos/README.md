@@ -46,6 +46,24 @@ make dev
 cd ecos/gui && pnpm tauri dev
 ```
 
+### Optional EDAbot Agent Bridge
+
+The AI chat panel can talk to a separately managed EDAbot agent process. Start
+ECOS Studio's backend first, then run:
+
+```bash
+cd ecos/agent
+edabot serve
+```
+
+The agent listens on `127.0.0.1:8766` by default and checks the ECOS Studio API
+URL sent by the GUI. Verify it before using the chat panel:
+
+```bash
+curl http://127.0.0.1:8766/health
+curl http://127.0.0.1:8766/api/agent/capabilities
+```
+
 ### DreamPlace Development
 
 DreamPlace C++ operators are compiled by Bazel and installed as `.so` files into the source tree for venv-based development:

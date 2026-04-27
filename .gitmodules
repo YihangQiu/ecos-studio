@@ -7,3 +7,6 @@
 [submodule "ecc"]
 	path = ecc
 	url = https://github.com/openecos-projects/ecc.git
+[submodule "ecos/agent"]
+	path = ecos/agent
+	url = https://github.com/YihangQiu/eda-agent-dev.git

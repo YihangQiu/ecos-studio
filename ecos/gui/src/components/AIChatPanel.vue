@@ -82,6 +82,7 @@ const scrollContainerRef = ref<HTMLDivElement | null>(null)
 const isSending = ref(false)
 const sessionId = `ecos_gui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 const agentEventsText = ref('')
+const activeAssistantMessageId = ref<string | null>(null)
 let agentSSEClient: AgentSSEClient | null = null
 
 const { currentProject } = useWorkspace()
@@ -131,6 +132,12 @@ onMounted(() => {
     }
     if (event.message) {
       agentEventsText.value = `${agentEventsText.value}\n[${event.stage || event.type}] ${event.message}`.trim()
+      if (isSending.value && activeAssistantMessageId.value) {
+        messageStore.updateMessage(activeAssistantMessageId.value, {
+          content: `${agentEventsText.value}\n\nThinking...`,
+          status: 'loading',
+        })
+      }
     }
   })
   agentSSEClient.connect()
@@ -221,6 +228,7 @@ const handleSubmit = async () => {
   inputValue.value = ''
   agentEventsText.value = ''
   const assistantId = messageStore.addAssistantMessage('Thinking...', 'loading')
+  activeAssistantMessageId.value = assistantId
   isSending.value = true
 
   try {
@@ -245,6 +253,7 @@ const handleSubmit = async () => {
     })
   } finally {
     isSending.value = false
+    activeAssistantMessageId.value = null
   }
 }
 

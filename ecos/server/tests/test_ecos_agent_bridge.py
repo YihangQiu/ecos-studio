@@ -100,3 +100,36 @@ def test_update_step_config_writes_audit_only(tmp_path: Path):
     assert response.data["effective_on_next_run"] is False
     audit = json.loads((ws / "home" / "strategy_overrides.json").read_text(encoding="utf-8"))
     assert audit["overrides"][-1]["step"] == "place"
+
+
+def test_cleanup_stale_outputs_removes_step_and_downstream_artifacts(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    (ws / "CTS_ecc" / "output").mkdir(parents=True)
+    (ws / "CTS_ecc" / "log").mkdir(parents=True)
+    (ws / "place_dreamplace" / "output").mkdir(parents=True)
+    (ws / "place_dreamplace" / "config").mkdir(parents=True)
+    (ws / "place_dreamplace" / "output" / "old.def").write_text("old", encoding="utf-8")
+    (ws / "place_dreamplace" / "analysis" / "old.json").write_text("{}", encoding="utf-8")
+    (ws / "place_dreamplace" / "config" / "keep.json").write_text("{}", encoding="utf-8")
+    (ws / "CTS_ecc" / "output" / "old.def").write_text("old", encoding="utf-8")
+    (ws / "CTS_ecc" / "log" / "old.log").write_text("old", encoding="utf-8")
+    (ws / "home" / "flow.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"name": "place", "tool": "dreamplace", "state": "Success"},
+                    {"name": "CTS", "tool": "ecc", "state": "Success"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    removed = service._cleanup_stale_step_artifacts(ws, "place")
+
+    assert "place_dreamplace/output/old.def" in removed
+    assert "place_dreamplace/analysis/old.json" in removed
+    assert "CTS_ecc/output/old.def" in removed
+    assert "CTS_ecc/log/old.log" in removed
+    assert (ws / "place_dreamplace" / "config" / "keep.json").exists()

@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 import uuid
+import contextlib
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -49,6 +50,17 @@ _ALLOWED_PARAMETER_PATHS = {
 _PARAMETER_ALIASES = {
     "Core.Utilization": "Core.Utilitization",
 }
+_STALE_STEP_DIR_NAMES = (
+    "output",
+    "log",
+    "report",
+    "analysis",
+    "feature",
+)
+_STALE_STEP_FILE_NAMES = (
+    "subflow.json",
+    "checklist.json",
+)
 
 
 def _summarize_request(data: object) -> dict:
@@ -175,8 +187,24 @@ class ECCService:
         self.engine_flow = engine_flow
 
         if engine_flow.is_flow_success():
+            self._dedupe_workspace_steps()
             return
         engine_flow.create_step_workspaces()
+        self._dedupe_workspace_steps()
+
+    def _dedupe_workspace_steps(self) -> None:
+        """Defensively remove duplicate workspace step entries after flow rebuild."""
+        if self.engine_flow is None or not hasattr(self.engine_flow, "workspace_steps"):
+            return
+        deduped = []
+        seen = set()
+        for workspace_step in self.engine_flow.workspace_steps:
+            key = getattr(workspace_step, "name", None) or id(workspace_step)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(workspace_step)
+        self.engine_flow.workspace_steps = deduped
 
     def _workspace_dir_from_request(self, data: dict) -> Path:
         directory = str(data.get("directory") or data.get("workspace_id") or "").strip()
@@ -295,6 +323,62 @@ class ECCService:
             else:
                 flattened[full_key] = value
         return flattened
+
+    @staticmethod
+    def _step_workspace_dir(workspace_dir: Path, name: str, tool: str) -> Path:
+        suffix = "yosys" if tool == "yosys" else tool
+        return workspace_dir / f"{name}_{suffix}"
+
+    def _flow_step_dirs_from(self, workspace_dir: Path, start_step: str) -> list[Path]:
+        flow = self._read_json(workspace_dir / "home" / "flow.json")
+        steps = flow.get("steps", [])
+        if not isinstance(steps, list):
+            return []
+        start_index = None
+        for index, step in enumerate(steps):
+            if isinstance(step, dict) and str(step.get("name", "")) == start_step:
+                start_index = index
+                break
+        if start_index is None:
+            return []
+        dirs = []
+        for step in steps[start_index:]:
+            if not isinstance(step, dict):
+                continue
+            name = str(step.get("name", "")).strip()
+            tool = str(step.get("tool", "")).strip()
+            if name and tool:
+                dirs.append(self._step_workspace_dir(workspace_dir, name, tool))
+        return dirs
+
+    def _cleanup_stale_step_artifacts(self, workspace_dir: Path, start_step: str) -> list[str]:
+        """Remove stale outputs/logs for target and downstream steps before rerun.
+
+        Configuration directories are intentionally preserved; this only clears
+        generated artifacts that could otherwise make an old result look fresh.
+        """
+        removed: list[str] = []
+        for step_dir in self._flow_step_dirs_from(workspace_dir, start_step):
+            if not step_dir.exists() or not step_dir.is_dir():
+                continue
+            for dirname in _STALE_STEP_DIR_NAMES:
+                target = step_dir / dirname
+                if target.exists():
+                    for path in sorted(target.rglob("*"), reverse=True):
+                        if path.is_file() or path.is_symlink():
+                            removed.append(str(path.relative_to(workspace_dir)))
+                            path.unlink(missing_ok=True)
+                        elif path.is_dir():
+                            with contextlib.suppress(OSError):
+                                path.rmdir()
+                    with contextlib.suppress(OSError):
+                        target.rmdir()
+            for filename in _STALE_STEP_FILE_NAMES:
+                target = step_dir / filename
+                if target.exists() and target.is_file():
+                    removed.append(str(target.relative_to(workspace_dir)))
+                    target.unlink(missing_ok=True)
+        return removed
 
     def get_flow_status(self, request: ECCRequest) -> ECCResponse:
         data = request.data
@@ -465,6 +549,8 @@ class ECCService:
             if start_step not in steps:
                 update(status="failed", error=f"unknown step: {start_step}")
                 return
+            removed_artifacts = service._cleanup_stale_step_artifacts(workspace_dir, start_step)
+            update(cleaned_artifacts=removed_artifacts)
             for step in steps[steps.index(start_step) :]:
                 update(current_step=step)
                 gui_notify.notify_to(

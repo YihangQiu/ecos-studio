@@ -212,6 +212,17 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
     assert grid.response == ResponseEnum.success.value
     assert grid.data["content"]["rows"] == 2
 
+    for kind in ("summary", "quality", "agent_view", "ml_view"):
+        response = service.get_foundation_data(ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": kind}))
+        assert response.response == ResponseEnum.success.value
+        assert response.data["kind"] == kind
+
+    maps = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "maps", "entity": "density", "stage": "place"})
+    )
+    assert maps.response == ResponseEnum.success.value
+    assert maps.data["content"]["place_allcell_density"] == [[1.0, 2.0], [3.0, 4.0]]
+
 
 def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
     ws = _workspace(tmp_path)
@@ -229,11 +240,53 @@ def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
             data={"directory": str(ws), "kind": "vectors", "entity": "../instances", "stage": "place"},
         )
     )
+    bad_stage_parent = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": ".."},
+        )
+    )
+    bad_stage_abs = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "/tmp/place"},
+        )
+    )
+    bad_stage_token = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "place/../../x"},
+        )
+    )
 
     assert bad_kind.response == ResponseEnum.error.value
     assert "unsupported foundation data kind" in bad_kind.message[0]
     assert bad_entity.response == ResponseEnum.error.value
     assert "invalid foundation data entity" in bad_entity.message[0]
+    assert bad_stage_parent.response == ResponseEnum.error.value
+    assert "invalid foundation data stage" in bad_stage_parent.message[0]
+    assert bad_stage_abs.response == ResponseEnum.error.value
+    assert "invalid foundation data stage" in bad_stage_abs.message[0]
+    assert bad_stage_token.response == ResponseEnum.error.value
+    assert "invalid foundation data stage" in bad_stage_token.message[0]
+
+
+def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    service.extract_foundation_data(
+        ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws), "profile": "iccd_full_v1", "force": "false"})
+    )
+
+    response = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "place", "index_only": "false"},
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    assert "records" in response.data["content"]
 
 
 def test_iccd_foundation_stale_detects_new_source_files(tmp_path: Path):

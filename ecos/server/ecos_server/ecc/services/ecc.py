@@ -164,8 +164,24 @@ def _jsonl_record_count(path: Path) -> int:
 
 
 def _validate_foundation_token(name: str, value: str) -> None:
-    if not _FOUNDATION_TOKEN_RE.fullmatch(value):
+    if value in {".", ".."} or "/" in value or "\\" in value or not _FOUNDATION_TOKEN_RE.fullmatch(value):
         raise ValueError(f"invalid foundation data {name}: {value}")
+
+
+def _parse_bool(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "off", ""}:
+            return False
+    raise ValueError(f"invalid boolean value: {value}")
 
 
 class ECCService:
@@ -559,7 +575,7 @@ class ECCService:
             profile = str(request.data.get("profile", "summary_v1")).strip() or "summary_v1"
             if profile == "iccd_full_v1":
                 extractor_cls = _foundation_extractor_class()
-                result = extractor_cls(workspace_dir, profile=profile).extract(force=bool(request.data.get("force", False)))
+                result = extractor_cls(workspace_dir, profile=profile).extract(force=_parse_bool(request.data.get("force", False)))
                 manifest = result.manifest
                 data = {
                     "directory": str(workspace_dir),
@@ -612,7 +628,7 @@ class ECCService:
             kind = str(request.data.get("kind", "summary")).strip().lower() or "summary"
             entity = str(request.data.get("entity", "")).strip()
             stage = str(request.data.get("stage", "")).strip()
-            index_only = bool(request.data.get("index_only", False))
+            index_only = _parse_bool(request.data.get("index_only", False))
             foundation_dir = workspace_dir / _FOUNDATION_DIR
             target = self._foundation_kind_path(foundation_dir, kind, entity=entity, stage=stage)
             foundation_root = foundation_dir.resolve()

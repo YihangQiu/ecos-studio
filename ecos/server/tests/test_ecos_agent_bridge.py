@@ -152,3 +152,103 @@ def test_cleanup_stale_outputs_removes_step_and_downstream_artifacts(tmp_path: P
     assert (ws / "CTS_ecc" / "output").is_dir()
     assert (ws / "CTS_ecc" / "log").is_dir()
     assert (ws / "place_dreamplace" / "config" / "keep.json").exists()
+
+
+def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    stage = ws / "place_dreamplace"
+    (stage / "output").mkdir(parents=True)
+    (stage / "feature" / "density_map").mkdir(parents=True)
+    (stage / "feature" / "egr_congestion_map").mkdir(parents=True)
+    (stage / "output" / "gcd_place.json").write_text(
+        json.dumps(
+            {
+                "design name": "gcd",
+                "diearea": {"path": [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]]},
+                "data": [
+                    {
+                        "type": "group",
+                        "struct name": "Instance_U1",
+                        "children": [
+                            {"type": "box", "layer": 0, "path": [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (stage / "feature" / "density_map" / "place_allcell_density.csv").write_text("1,2\n3,4\n", encoding="utf-8")
+    (stage / "feature" / "egr_congestion_map" / "place_egr_horizontal_overflow.csv").write_text("5\n", encoding="utf-8")
+    (stage / "feature" / "egr_congestion_map" / "place_egr_vertical_overflow.csv").write_text("7\n", encoding="utf-8")
+
+    service = ECCService()
+    extract = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={"directory": str(ws), "profile": "iccd_full_v1", "include_raw_refs": True},
+        )
+    )
+    assert extract.response == ResponseEnum.success.value
+    assert extract.data["profile"] == "iccd_full_v1"
+    assert "canonical_grid" in extract.data["manifest"]["artifacts"]
+
+    indexed = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "place", "index_only": True},
+        )
+    )
+    assert indexed.response == ResponseEnum.success.value
+    assert indexed.data["kind"] == "vectors"
+    assert indexed.data["entity"] == "instances"
+    assert indexed.data["stage"] == "place"
+    assert indexed.data["content"]["path"].endswith("vectors/instances/place-00000.jsonl")
+    assert indexed.data["content"]["record_count"] == 1
+
+    grid = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "canonical_grid"})
+    )
+    assert grid.response == ResponseEnum.success.value
+    assert grid.data["content"]["rows"] == 2
+
+
+def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    service.extract_foundation_data(
+        ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws), "profile": "iccd_full_v1"})
+    )
+
+    bad_kind = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "../../home/flow"})
+    )
+    bad_entity = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "../instances", "stage": "place"},
+        )
+    )
+
+    assert bad_kind.response == ResponseEnum.error.value
+    assert "unsupported foundation data kind" in bad_kind.message[0]
+    assert bad_entity.response == ResponseEnum.error.value
+    assert "invalid foundation data entity" in bad_entity.message[0]
+
+
+def test_iccd_foundation_stale_detects_new_source_files(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    service.extract_foundation_data(
+        ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws), "profile": "iccd_full_v1"})
+    )
+
+    time.sleep(0.01)
+    new_csv = ws / "place_dreamplace" / "feature" / "density_map" / "new_density.csv"
+    new_csv.parent.mkdir(parents=True, exist_ok=True)
+    new_csv.write_text("1,2\n", encoding="utf-8")
+
+    status = service.get_foundation_data(ECCRequest(cmd="get_foundation_data", data={"directory": str(ws)}))
+
+    assert status.response == ResponseEnum.warning.value
+    assert status.data["stale"] is True

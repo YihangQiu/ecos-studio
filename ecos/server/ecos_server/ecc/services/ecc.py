@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -26,6 +27,28 @@ logger = logging.getLogger(__name__)
 
 _TEXT_ARTIFACT_LIMIT = 120_000
 _FOUNDATION_DIR = Path("foundation_data") / "ecc"
+_FOUNDATION_KINDS = {
+    "manifest",
+    "summary",
+    "stage_index",
+    "canonical_grid",
+    "quality",
+    "ml_view",
+    "agent_view",
+    "vectors",
+    "maps",
+}
+_FOUNDATION_VECTOR_ENTITIES = {
+    "instances",
+    "nets",
+    "pins",
+    "wires",
+    "routing_graphs",
+    "timing_paths",
+    "patches",
+}
+_FOUNDATION_MAP_ENTITIES = {"density", "egr_overflow", "rudy", "margin", "other"}
+_FOUNDATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _TASKS: dict[str, dict] = {}
 _TASKS_LOCK = threading.Lock()
 _WORKSPACE_LOCKS: dict[str, threading.Lock] = {}
@@ -107,6 +130,42 @@ def _summarize_request(data: object) -> dict:
         rtl = data["rtl_list"]
         summary["rtl_count"] = len(rtl.splitlines() if isinstance(rtl, str) else rtl)
     return summary
+
+
+def _foundation_extractor_class():
+    try:
+        from chipcompiler.data.foundation import FoundationExtractor
+        return FoundationExtractor
+    except ModuleNotFoundError:
+        local_ecc = Path(__file__).resolve().parents[5] / "ecc"
+        local_pkg = local_ecc / "chipcompiler"
+        if local_pkg.exists():
+            sys.path.insert(0, str(local_ecc))
+            import chipcompiler
+
+            pkg_path = str(local_pkg)
+            if pkg_path not in getattr(chipcompiler, "__path__", []):
+                chipcompiler.__path__.append(pkg_path)
+            if "chipcompiler.data" in sys.modules:
+                data_pkg_path = str(local_pkg / "data")
+                data_pkg = sys.modules["chipcompiler.data"]
+                if data_pkg_path not in getattr(data_pkg, "__path__", []):
+                    data_pkg.__path__.append(data_pkg_path)
+            from chipcompiler.data.foundation import FoundationExtractor
+            return FoundationExtractor
+        raise
+
+
+def _jsonl_record_count(path: Path) -> int:
+    if not path.exists() or not path.is_file():
+        return 0
+    with path.open("r", encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+def _validate_foundation_token(name: str, value: str) -> None:
+    if not _FOUNDATION_TOKEN_RE.fullmatch(value):
+        raise ValueError(f"invalid foundation data {name}: {value}")
 
 
 class ECCService:
@@ -315,7 +374,20 @@ class ECCService:
 
     def _foundation_is_stale(self, workspace_dir: Path, manifest: dict) -> bool:
         recorded = manifest.get("sources", {}) if isinstance(manifest, dict) else {}
+        if manifest.get("profile") == "iccd_full_v1" or int(manifest.get("version", 0) or 0) >= 2:
+            return recorded != self._foundation_v2_source_signature(workspace_dir)
         return recorded != self._source_signature(self._foundation_sources(workspace_dir))
+
+    def _foundation_v2_source_signature(self, workspace_dir: Path) -> dict[str, float]:
+        paths = [workspace_dir / "home" / "flow.json", workspace_dir / "home" / "parameters.json"]
+        for stage_dir in workspace_dir.glob("*_*"):
+            if not stage_dir.is_dir():
+                continue
+            for folder in ("output", "feature", "analysis", "report", "data"):
+                root = stage_dir / folder
+                if root.exists():
+                    paths.extend(path for path in root.rglob("*") if path.is_file())
+        return self._source_signature(paths)
 
     def _task_snapshot(self, workspace_dir: Path | None = None) -> list[dict]:
         with _TASKS_LOCK:
@@ -484,29 +556,45 @@ class ECCService:
         try:
             workspace_dir = self._workspace_dir_from_request(request.data)
             foundation_dir = workspace_dir / _FOUNDATION_DIR
-            payload = self._foundation_payload(workspace_dir)
-            sources = self._foundation_sources(workspace_dir)
-            manifest = {
-                "version": 1,
-                "workspace": str(workspace_dir),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "sources": self._source_signature(sources),
-                "artifacts": {
-                    "summary": str(foundation_dir / "summary.json"),
-                    "metrics": str(foundation_dir / "metrics.json"),
-                },
-            }
-            self._write_json(foundation_dir / "summary.json", payload)
-            self._write_json(foundation_dir / "metrics.json", {"metrics": payload["metrics"]})
-            self._write_json(foundation_dir / "parameters.json", {"parameters": payload["parameters"]})
-            self._write_json(self._manifest_path(workspace_dir), manifest)
-            data = {
-                "directory": str(workspace_dir),
-                "foundation_dir": str(foundation_dir),
-                "manifest_path": str(self._manifest_path(workspace_dir)),
-                "stale": False,
-                "summary": payload,
-            }
+            profile = str(request.data.get("profile", "summary_v1")).strip() or "summary_v1"
+            if profile == "iccd_full_v1":
+                extractor_cls = _foundation_extractor_class()
+                result = extractor_cls(workspace_dir, profile=profile).extract(force=bool(request.data.get("force", False)))
+                manifest = result.manifest
+                data = {
+                    "directory": str(workspace_dir),
+                    "foundation_dir": str(result.foundation_dir),
+                    "manifest_path": str(self._manifest_path(workspace_dir)),
+                    "profile": profile,
+                    "stale": False,
+                    "manifest": manifest,
+                    "summary": result.summary,
+                }
+            else:
+                payload = self._foundation_payload(workspace_dir)
+                sources = self._foundation_sources(workspace_dir)
+                manifest = {
+                    "version": 1,
+                    "workspace": str(workspace_dir),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "sources": self._source_signature(sources),
+                    "artifacts": {
+                        "summary": str(foundation_dir / "summary.json"),
+                        "metrics": str(foundation_dir / "metrics.json"),
+                    },
+                }
+                self._write_json(foundation_dir / "summary.json", payload)
+                self._write_json(foundation_dir / "metrics.json", {"metrics": payload["metrics"]})
+                self._write_json(foundation_dir / "parameters.json", {"parameters": payload["parameters"]})
+                self._write_json(self._manifest_path(workspace_dir), manifest)
+                data = {
+                    "directory": str(workspace_dir),
+                    "foundation_dir": str(foundation_dir),
+                    "manifest_path": str(self._manifest_path(workspace_dir)),
+                    "profile": profile,
+                    "stale": False,
+                    "summary": payload,
+                }
         except Exception as e:
             return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
         return ECCResponse(
@@ -522,16 +610,35 @@ class ECCService:
             manifest_path = self._manifest_path(workspace_dir)
             manifest = self._read_json(manifest_path)
             kind = str(request.data.get("kind", "summary")).strip().lower() or "summary"
-            target = workspace_dir / _FOUNDATION_DIR / f"{kind}.json"
-            payload = self._read_json(target)
+            entity = str(request.data.get("entity", "")).strip()
+            stage = str(request.data.get("stage", "")).strip()
+            index_only = bool(request.data.get("index_only", False))
+            foundation_dir = workspace_dir / _FOUNDATION_DIR
+            target = self._foundation_kind_path(foundation_dir, kind, entity=entity, stage=stage)
+            foundation_root = foundation_dir.resolve()
+            target_resolved = target.resolve(strict=False)
+            if not target_resolved.is_relative_to(foundation_root):
+                raise ValueError("foundation data path escapes foundation directory")
+            if target.suffix == ".jsonl":
+                content = {
+                    "path": str(target),
+                    "relative_path": str(target.relative_to(foundation_dir)),
+                    "record_count": _jsonl_record_count(target),
+                }
+                if not index_only and target.exists():
+                    content["records"] = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines() if line.strip()]
+            else:
+                content = self._read_json(target)
             stale = self._foundation_is_stale(workspace_dir, manifest) if manifest else True
             data = {
                 "directory": str(workspace_dir),
                 "kind": kind,
+                "entity": entity or None,
+                "stage": stage or None,
                 "manifest": manifest,
                 "manifest_path": str(manifest_path),
                 "stale": stale,
-                "content": payload,
+                "content": content,
             }
         except Exception as e:
             return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
@@ -541,6 +648,36 @@ class ECCService:
             data=data,
             message=[f"foundation data {'stale' if data['stale'] else 'current'}: {workspace_dir}"],
         )
+
+    @staticmethod
+    def _foundation_kind_path(foundation_dir: Path, kind: str, *, entity: str = "", stage: str = "") -> Path:
+        if kind not in _FOUNDATION_KINDS:
+            raise ValueError(f"unsupported foundation data kind: {kind}")
+        if kind == "manifest":
+            return foundation_dir / "manifest.json"
+        if kind in {"summary", "stage_index", "canonical_grid", "quality"}:
+            return foundation_dir / f"{kind}.json"
+        if kind == "ml_view":
+            return foundation_dir / "views" / "ml" / "dataset_index.json"
+        if kind == "agent_view":
+            return foundation_dir / "views" / "agent" / "run_summary.json"
+        if kind == "vectors":
+            if not entity or not stage:
+                raise ValueError("kind=vectors requires entity and stage")
+            _validate_foundation_token("entity", entity)
+            _validate_foundation_token("stage", stage)
+            if entity not in _FOUNDATION_VECTOR_ENTITIES:
+                raise ValueError(f"invalid foundation data entity: {entity}")
+            return foundation_dir / "vectors" / entity / f"{stage}-00000.jsonl"
+        if kind == "maps":
+            if not entity or not stage:
+                raise ValueError("kind=maps requires entity and stage")
+            _validate_foundation_token("entity", entity)
+            _validate_foundation_token("stage", stage)
+            if entity not in _FOUNDATION_MAP_ENTITIES:
+                raise ValueError(f"invalid foundation data entity: {entity}")
+            return foundation_dir / "maps" / "canonical" / stage / f"{entity}.json"
+        raise ValueError(f"unsupported foundation data kind: {kind}")
 
     def clone_workspace(self, request: ECCRequest) -> ECCResponse:
         data = request.data

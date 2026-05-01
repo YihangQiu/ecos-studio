@@ -575,7 +575,11 @@ class ECCService:
             profile = str(request.data.get("profile", "summary_v1")).strip() or "summary_v1"
             if profile == "iccd_full_v1":
                 extractor_cls = _foundation_extractor_class()
-                result = extractor_cls(workspace_dir, profile=profile).extract(force=_parse_bool(request.data.get("force", False)))
+                result = extractor_cls(workspace_dir, profile=profile).extract(
+                    force=_parse_bool(request.data.get("force", False)),
+                    stages=request.data.get("stages", "all"),
+                    include_raw_refs=_parse_bool(request.data.get("include_raw_refs", True), default=True),
+                )
                 manifest = result.manifest
                 data = {
                     "directory": str(workspace_dir),

@@ -305,3 +305,61 @@ def test_iccd_foundation_stale_detects_new_source_files(tmp_path: Path):
 
     assert status.response == ResponseEnum.warning.value
     assert status.data["stale"] is True
+
+
+def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    stage = ws / "place_dreamplace"
+    (stage / "output").mkdir(parents=True)
+    (stage / "output" / "gcd_place.json").write_text(
+        json.dumps(
+            {
+                "design name": "gcd",
+                "diearea": {"path": [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]]},
+                "data": [
+                    {
+                        "type": "group",
+                        "struct name": "Instance_U1",
+                        "children": [
+                            {"type": "box", "layer": 0, "path": [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={
+                "directory": str(ws),
+                "profile": "iccd_full_v1",
+                "stages": ["place"],
+                "include_raw_refs": "false",
+            },
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    manifest = response.data["manifest"]
+    assert manifest["options"] == {"stages": ["place"], "include_raw_refs": False}
+    assert "raw_refs" not in manifest["artifacts"]
+    assert [item["name"] for item in response.data["summary"]["stages"]] == ["place"]
+    assert not (ws / "foundation_data" / "ecc" / "raw_refs" / "artifacts.json").exists()
+
+
+def test_extract_foundation_data_rejects_unknown_stage_filter(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={"directory": str(ws), "profile": "iccd_full_v1", "stages": ["route"]},
+        )
+    )
+
+    assert response.response == ResponseEnum.error.value
+    assert "unknown foundation extraction stage" in response.message[0]

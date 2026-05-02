@@ -191,7 +191,15 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
     )
     assert extract.response == ResponseEnum.success.value
     assert extract.data["profile"] == "iccd_full_v1"
-    assert "canonical_grid" in extract.data["manifest"]["artifacts"]
+    manifest = extract.data["manifest"]
+    assert set(manifest) == {"options", "workspace", "sources", "artifacts"}
+    assert "version" not in manifest
+    assert "profile" not in manifest
+    assert "created_at" not in manifest
+    assert "home/flow.json" in manifest["sources"]
+    assert "place_dreamplace/analysis/place_metrics.json" in manifest["sources"]
+    assert all(not Path(source).is_absolute() for source in manifest["sources"])
+    assert manifest["artifacts"]["canonical_grid"] == "foundation_data/ecc/canonical_grid.json"
 
     indexed = service.get_foundation_data(
         ECCRequest(

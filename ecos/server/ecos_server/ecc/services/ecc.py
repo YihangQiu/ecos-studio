@@ -390,11 +390,13 @@ class ECCService:
 
     def _foundation_is_stale(self, workspace_dir: Path, manifest: dict) -> bool:
         recorded = manifest.get("sources", {}) if isinstance(manifest, dict) else {}
-        if manifest.get("profile") == "iccd_full_v1" or int(manifest.get("version", 0) or 0) >= 2:
+        if isinstance(recorded, list):
             return recorded != self._foundation_v2_source_signature(workspace_dir)
+        if manifest.get("profile") == "iccd_full_v1" or int(manifest.get("version", 0) or 0) >= 2:
+            return recorded != self._foundation_v2_source_mtime_signature(workspace_dir)
         return recorded != self._source_signature(self._foundation_sources(workspace_dir))
 
-    def _foundation_v2_source_signature(self, workspace_dir: Path) -> dict[str, float]:
+    def _foundation_v2_source_paths(self, workspace_dir: Path) -> list[Path]:
         paths = [workspace_dir / "home" / "flow.json", workspace_dir / "home" / "parameters.json"]
         for stage_dir in workspace_dir.glob("*_*"):
             if not stage_dir.is_dir():
@@ -403,7 +405,13 @@ class ECCService:
                 root = stage_dir / folder
                 if root.exists():
                     paths.extend(path for path in root.rglob("*") if path.is_file())
-        return self._source_signature(paths)
+        return sorted(set(paths))
+
+    def _foundation_v2_source_signature(self, workspace_dir: Path) -> list[str]:
+        return [str(path.relative_to(workspace_dir)) for path in self._foundation_v2_source_paths(workspace_dir) if path.exists()]
+
+    def _foundation_v2_source_mtime_signature(self, workspace_dir: Path) -> dict[str, float]:
+        return self._source_signature(self._foundation_v2_source_paths(workspace_dir))
 
     def _task_snapshot(self, workspace_dir: Path | None = None) -> list[dict]:
         with _TASKS_LOCK:

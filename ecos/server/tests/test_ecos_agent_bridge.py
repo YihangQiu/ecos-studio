@@ -203,7 +203,7 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
     assert indexed.data["kind"] == "vectors"
     assert indexed.data["entity"] == "instances"
     assert indexed.data["stage"] == "place"
-    assert indexed.data["content"]["path"].endswith("vectors/instances/place-00000.jsonl")
+    assert indexed.data["content"]["path"].endswith("vectors/instances/place.jsonl")
     assert indexed.data["content"]["record_count"] == 1
 
     grid = service.get_foundation_data(

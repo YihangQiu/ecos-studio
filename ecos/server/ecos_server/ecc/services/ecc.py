@@ -688,7 +688,7 @@ class ECCService:
             _validate_foundation_token("stage", stage)
             if entity not in _FOUNDATION_VECTOR_ENTITIES:
                 raise ValueError(f"invalid foundation data entity: {entity}")
-            return foundation_dir / "vectors" / entity / f"{stage}-00000.jsonl"
+            return foundation_dir / "vectors" / entity / f"{stage}.jsonl"
         if kind == "maps":
             if not entity or not stage:
                 raise ValueError("kind=maps requires entity and stage")

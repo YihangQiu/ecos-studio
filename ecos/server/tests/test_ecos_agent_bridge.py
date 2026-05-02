@@ -154,6 +154,100 @@ def test_cleanup_stale_outputs_removes_step_and_downstream_artifacts(tmp_path: P
     assert (ws / "place_dreamplace" / "config" / "keep.json").exists()
 
 
+def test_clone_workspace_rewrites_embedded_workspace_paths(tmp_path: Path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    (source / "home").mkdir(parents=True)
+    (source / "route_ecc" / "config").mkdir(parents=True)
+    (source / "route_ecc" / "subflow.json").write_text(
+        json.dumps({"path": str(source / "route_ecc" / "subflow.json")}),
+        encoding="utf-8",
+    )
+    (source / "route_ecc" / "config" / "db_default_config.json").write_text(
+        json.dumps(
+            {
+                "INPUT": {
+                    "def_path": str(source / "legalization_dreamplace" / "output" / "gcd.def.gz")
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (source / "home" / "home.json").write_text(
+        json.dumps({"flow": str(source / "home" / "flow.json")}),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    response = service.clone_workspace(
+        ECCRequest(
+            cmd="clone_workspace",
+            data={"directory": str(source), "target_directory": str(target)},
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    target_db = json.loads(
+        (target / "route_ecc" / "config" / "db_default_config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    target_subflow = json.loads(
+        (target / "route_ecc" / "subflow.json").read_text(encoding="utf-8")
+    )
+    target_home = json.loads((target / "home" / "home.json").read_text(encoding="utf-8"))
+    combined = json.dumps([target_db, target_subflow, target_home])
+    assert str(source) not in combined
+    assert str(target) in combined
+
+
+def test_prepare_rerun_rebuilds_cloned_step_config_paths(tmp_path: Path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    route_dir = target / "route_ecc"
+    (source / "home").mkdir(parents=True)
+    (target / "home").mkdir(parents=True)
+    (route_dir / "config").mkdir(parents=True)
+    (target / "legalization_dreamplace" / "output").mkdir(parents=True)
+    (target / "origin").mkdir(parents=True)
+    (target / "home" / "flow.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"name": "legalization", "tool": "dreamplace", "state": "Success"},
+                    {"name": "route", "tool": "ecc", "state": "Success"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (route_dir / "config" / "db_default_config.json").write_text(
+        json.dumps({"INPUT": {"def_path": str(source / "old.def.gz")}}),
+        encoding="utf-8",
+    )
+    (route_dir / "config" / "rt_default_config.json").write_text(
+        json.dumps({"RT": {"-temp_directory_path": str(source / "route_ecc" / "data" / "rt")}}),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    rebuilt = service._prepare_rerun_step_configs(target, "route")
+
+    assert "route_ecc/config/db_default_config.json" in rebuilt
+    assert "route_ecc/config/rt_default_config.json" in rebuilt
+    db_config = json.loads(
+        (route_dir / "config" / "db_default_config.json").read_text(encoding="utf-8")
+    )
+    rt_config = json.loads(
+        (route_dir / "config" / "rt_default_config.json").read_text(encoding="utf-8")
+    )
+    assert str(source) not in json.dumps([db_config, rt_config])
+    assert db_config["INPUT"]["def_path"] == str(
+        target / "legalization_dreamplace" / "output" / "gcd_legalization.def.gz"
+    )
+    assert rt_config["RT"]["-temp_directory_path"] == str(route_dir / "data" / "rt")
+
+
 def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: Path):
     ws = _workspace(tmp_path)
     stage = ws / "place_dreamplace"

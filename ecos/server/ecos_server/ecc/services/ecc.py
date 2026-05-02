@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import contextlib
 import json
 import logging
 import os
@@ -8,7 +9,6 @@ import sys
 import threading
 import time
 import uuid
-import contextlib
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -114,6 +114,19 @@ _STALE_STEP_FILE_NAMES = (
     "subflow.json",
     "checklist.json",
 )
+_RELOCATABLE_TEXT_SUFFIXES = {
+    ".cfg",
+    ".conf",
+    ".json",
+    ".log",
+    ".sdc",
+    ".tcl",
+    ".toml",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+_RELOCATABLE_TEXT_LIMIT = 5 * 1024 * 1024
 
 
 def _summarize_request(data: object) -> dict:
@@ -465,14 +478,62 @@ class ECCService:
         suffix = "yosys" if tool == "yosys" else tool
         return workspace_dir / f"{name}_{suffix}"
 
-    def _flow_step_dirs_from(self, workspace_dir: Path, start_step: str) -> list[Path]:
-        flow = self._read_json(workspace_dir / "home" / "flow.json")
+    @staticmethod
+    def _workspace_path_aliases(path: Path) -> list[str]:
+        resolved = path.expanduser().resolve()
+        aliases = [str(resolved)]
+        with contextlib.suppress(ValueError):
+            aliases.append(str(Path("/workspaces") / resolved.relative_to("/home/yhqiu1")))
+        with contextlib.suppress(ValueError):
+            aliases.append(str(Path("/home/yhqiu1") / resolved.relative_to("/workspaces")))
+        out = []
+        for item in aliases:
+            if item not in out:
+                out.append(item)
+        return out
+
+    @classmethod
+    def _relocate_workspace_paths(cls, target_dir: Path, source_dir: Path) -> list[str]:
+        """Rewrite copied text artifacts so embedded workspace paths point at target_dir."""
+        replacements = list(
+            zip(
+                cls._workspace_path_aliases(source_dir),
+                cls._workspace_path_aliases(target_dir),
+                strict=False,
+            )
+        )
+        rewritten: list[str] = []
+        for path in sorted(target_dir.rglob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            if path.suffix not in _RELOCATABLE_TEXT_SUFFIXES and path.name not in {"filelist"}:
+                continue
+            with contextlib.suppress(OSError):
+                if path.stat().st_size > _RELOCATABLE_TEXT_LIMIT:
+                    continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            updated = text
+            for src, dst in replacements:
+                updated = updated.replace(src, dst)
+            if updated != text:
+                path.write_text(updated, encoding="utf-8")
+                rewritten.append(str(path.relative_to(target_dir)))
+        return rewritten
+
+    @staticmethod
+    def _flow_steps(workspace_dir: Path) -> list[dict]:
+        flow = ECCService._read_json(workspace_dir / "home" / "flow.json")
         steps = flow.get("steps", [])
-        if not isinstance(steps, list):
-            return []
+        return [step for step in steps if isinstance(step, dict)] if isinstance(steps, list) else []
+
+    def _flow_step_dirs_from(self, workspace_dir: Path, start_step: str) -> list[Path]:
+        steps = self._flow_steps(workspace_dir)
         start_index = None
         for index, step in enumerate(steps):
-            if isinstance(step, dict) and str(step.get("name", "")) == start_step:
+            if str(step.get("name", "")) == start_step:
                 start_index = index
                 break
         if start_index is None:
@@ -514,6 +575,107 @@ class ECCService:
                     removed.append(str(target.relative_to(workspace_dir)))
                     target.unlink(missing_ok=True)
         return removed
+
+    def _prepare_rerun_step_configs(self, workspace_dir: Path, start_step: str) -> list[str]:
+        """Refresh config paths for the rerun slice after cloning or artifact cleanup."""
+        steps = self._flow_steps(workspace_dir)
+        start_index = next(
+            (index for index, step in enumerate(steps) if str(step.get("name", "")) == start_step),
+            None,
+        )
+        if start_index is None:
+            return []
+
+        parameters = self._read_json(workspace_dir / "home" / "parameters.json")
+        design = str(parameters.get("Design") or "gcd")
+        origin_dir = workspace_dir / "origin"
+        sdc_candidates = sorted(origin_dir.glob("*.sdc"))
+        sdc_path = str(sdc_candidates[0]) if sdc_candidates else str(origin_dir / f"{design}.sdc")
+        changed: set[str] = set()
+
+        def step_dir(step: dict) -> Path:
+            return self._step_workspace_dir(
+                workspace_dir,
+                str(step.get("name", "")),
+                str(step.get("tool", "")),
+            )
+
+        def step_output(step: dict, suffix: str) -> str:
+            name = str(step.get("name", ""))
+            return str(step_dir(step) / "output" / f"{design}_{name}.{suffix}")
+
+        origin_def_candidates = sorted(origin_dir.glob("*.def")) + sorted(
+            origin_dir.glob("*.def.gz")
+        )
+        origin_verilog_candidates = sorted(origin_dir.glob("*.v")) + sorted(
+            origin_dir.glob("*.v.gz")
+        )
+        input_def = (
+            str(origin_def_candidates[0])
+            if origin_def_candidates
+            else str(origin_dir / f"{design}.def")
+        )
+        input_verilog = (
+            str(origin_verilog_candidates[0])
+            if origin_verilog_candidates
+            else str(origin_dir / f"{design}.v")
+        )
+
+        for index, step in enumerate(steps):
+            name = str(step.get("name", "")).strip()
+            tool = str(step.get("tool", "")).strip()
+            if not name or not tool:
+                continue
+            current_dir = self._step_workspace_dir(workspace_dir, name, tool)
+            if index > 0:
+                previous = steps[index - 1]
+                input_def = step_output(previous, "def.gz")
+                input_verilog = step_output(previous, "v")
+            if index < start_index:
+                continue
+
+            config_dir = current_dir / "config"
+            flow_config = config_dir / "flow_config.json"
+            flow = self._read_json(flow_config)
+            if flow:
+                config_paths = flow.setdefault("ConfigPath", {})
+                config_paths.update(
+                    {
+                        "idb_path": str(config_dir / "db_default_config.json"),
+                        "ifp_path": str(config_dir / "fp_default_config.json"),
+                        "ipl_path": str(config_dir / "pl_default_config.json"),
+                        "irt_path": str(config_dir / "rt_default_config.json"),
+                        "idrc_path": str(config_dir / "drc_default_config.json"),
+                        "icts_path": str(config_dir / "cts_default_config.json"),
+                        "ito_path": str(config_dir / "to_default_config_drv.json"),
+                        "ipnp_path": str(config_dir / "pnp_default_config.json"),
+                    }
+                )
+                self._write_json(flow_config, flow)
+                changed.add(str(flow_config.relative_to(workspace_dir)))
+
+            db_config = config_dir / "db_default_config.json"
+            db = self._read_json(db_config)
+            if db:
+                db.setdefault("INPUT", {}).update(
+                    {
+                        "def_path": input_def,
+                        "verilog_path": input_verilog,
+                        "sdc_path": sdc_path,
+                    }
+                )
+                db.setdefault("OUTPUT", {})["output_dir_path"] = str(current_dir / "output")
+                self._write_json(db_config, db)
+                changed.add(str(db_config.relative_to(workspace_dir)))
+
+            rt_config = config_dir / "rt_default_config.json"
+            rt = self._read_json(rt_config)
+            if rt:
+                rt.setdefault("RT", {})["-temp_directory_path"] = str(current_dir / "data" / "rt")
+                self._write_json(rt_config, rt)
+                changed.add(str(rt_config.relative_to(workspace_dir)))
+
+        return sorted(changed)
 
     def get_flow_status(self, request: ECCRequest) -> ECCResponse:
         data = request.data
@@ -723,13 +885,23 @@ class ECCService:
                     data={"source": str(source_dir), "target": str(target_dir)},
                     message=[f"target workspace already exists: {target_dir}"],
                 )
-            shutil.copytree(source_dir, target_dir, ignore=shutil.ignore_patterns("foundation_data/ecc"))
+            shutil.copytree(
+                source_dir,
+                target_dir,
+                ignore=shutil.ignore_patterns("foundation_data/ecc"),
+            )
+            rewritten = self._relocate_workspace_paths(target_dir, source_dir)
         except Exception as e:
             return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.success.value,
-            data={"source": str(source_dir), "target": str(target_dir), "workspace_id": str(target_dir)},
+            data={
+                "source": str(source_dir),
+                "target": str(target_dir),
+                "workspace_id": str(target_dir),
+                "rewritten_paths": rewritten,
+            },
             message=[f"workspace cloned: {target_dir}"],
         )
 
@@ -754,7 +926,8 @@ class ECCService:
                 update(status="failed", error=f"unknown step: {start_step}")
                 return
             removed_artifacts = service._cleanup_stale_step_artifacts(workspace_dir, start_step)
-            update(cleaned_artifacts=removed_artifacts)
+            rebuilt_configs = service._prepare_rerun_step_configs(workspace_dir, start_step)
+            update(cleaned_artifacts=removed_artifacts, rebuilt_configs=rebuilt_configs)
             for step in steps[steps.index(start_step) :]:
                 update(current_step=step)
                 gui_notify.notify_to(

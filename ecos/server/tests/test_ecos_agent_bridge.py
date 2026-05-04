@@ -325,7 +325,8 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
     assert maps.response == ResponseEnum.success.value
     assert maps.data["content"]["stage"] == "place"
     assert maps.data["content"]["category"] == "density"
-    assert maps.data["content"]["maps"]["place_allcell_density"]["values"][0] == {
+    assert "place_allcell_density" not in maps.data["content"]["maps"]
+    assert maps.data["content"]["maps"]["allcell_density"]["values"][0] == {
         "patch_id": 0,
         "row": 0,
         "col": 0,

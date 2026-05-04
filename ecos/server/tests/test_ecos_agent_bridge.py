@@ -323,7 +323,14 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
         ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "maps", "entity": "density", "stage": "place"})
     )
     assert maps.response == ResponseEnum.success.value
-    assert maps.data["content"]["place_allcell_density"] == [[1.0, 2.0], [3.0, 4.0]]
+    assert maps.data["content"]["stage"] == "place"
+    assert maps.data["content"]["category"] == "density"
+    assert maps.data["content"]["maps"]["place_allcell_density"]["values"][0] == {
+        "patch_id": 0,
+        "row": 0,
+        "col": 0,
+        "value": 1.0,
+    }
 
 
 def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
@@ -449,7 +456,7 @@ def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_p
     manifest = response.data["manifest"]
     assert manifest["options"] == {"stages": ["place"], "include_raw_refs": False}
     assert "raw_refs" not in manifest["artifacts"]
-    assert [item["name"] for item in response.data["summary"]["stages"]] == ["place"]
+    assert [item["name"] for item in response.data["summary"]["flow"]["steps"]] == ["place"]
     assert not (ws / "foundation_data" / "ecc" / "raw_refs" / "artifacts.json").exists()
 
 

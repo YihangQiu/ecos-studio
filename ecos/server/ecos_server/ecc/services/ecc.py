@@ -866,7 +866,7 @@ class ECCService:
             _validate_foundation_token("stage", stage)
             if entity not in _FOUNDATION_MAP_ENTITIES:
                 raise ValueError(f"invalid foundation data entity: {entity}")
-            return foundation_dir / "maps" / "canonical" / stage / f"{entity}.json"
+            return foundation_dir / "maps" / stage / f"{entity}.json"
         raise ValueError(f"unsupported foundation data kind: {kind}")
 
     def clone_workspace(self, request: ECCRequest) -> ECCResponse:

@@ -47,7 +47,7 @@ _FOUNDATION_VECTOR_ENTITIES = {
     "timing_paths",
     "patches",
 }
-_FOUNDATION_MAP_ENTITIES = {"density", "egr_overflow", "rudy", "margin", "other"}
+_FOUNDATION_MAP_ENTITIES = {"density", "congestion", "rudy", "margin", "other"}
 _FOUNDATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _TASKS: dict[str, dict] = {}
 _TASKS_LOCK = threading.Lock()

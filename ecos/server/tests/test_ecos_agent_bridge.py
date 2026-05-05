@@ -253,7 +253,9 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
     stage = ws / "place_dreamplace"
     (stage / "output").mkdir(parents=True)
     (stage / "feature" / "density_map").mkdir(parents=True)
-    (stage / "feature" / "egr_congestion_map").mkdir(parents=True)
+    (stage / "feature" / "gcell_patch_map" / "density_map").mkdir(parents=True)
+    early_router = stage / "data" / "rt" / "rt_temp_directory" / "early_router"
+    early_router.mkdir(parents=True)
     (stage / "output" / "gcd_place.json").write_text(
         json.dumps(
             {
@@ -273,8 +275,30 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
         encoding="utf-8",
     )
     (stage / "feature" / "density_map" / "place_allcell_density.csv").write_text("1,2\n3,4\n", encoding="utf-8")
-    (stage / "feature" / "egr_congestion_map" / "place_egr_horizontal_overflow.csv").write_text("5\n", encoding="utf-8")
-    (stage / "feature" / "egr_congestion_map" / "place_egr_vertical_overflow.csv").write_text("7\n", encoding="utf-8")
+    (stage / "feature" / "gcell_patch_map" / "density_map" / "place_allcell_density.csv").write_text("1,2\n3,4\n", encoding="utf-8")
+    (early_router / "gcell.info").write_text(
+        "0,0,0,0,10,10\n0,1,0,10,10,20\n1,0,10,0,20,10\n1,1,10,10,20,20\n",
+        encoding="utf-8",
+    )
+    (early_router / "route.guide").write_text(
+        "\n".join(
+            [
+                "guide net_name",
+                "pin grid_x grid_y real_x real_y layer energy name",
+                "wire grid1_x grid1_y grid2_x grid2_y real1_x real1_y real2_x real2_y layer",
+                "via grid_x grid_y real_x real_y layer1 layer2",
+                "guide n1",
+                "wire 0 0 1 0 0 0 10 0 MET2",
+                "wire 0 0 0 1 0 0 0 10 MET3",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (early_router / "net_map_MET2.csv").write_text("8,0\n1,2\n", encoding="utf-8")
+    (early_router / "supply_map_MET2.csv").write_text("5,1\n3,4\n", encoding="utf-8")
+    (early_router / "net_map_MET3.csv").write_text("2,5\n4,8\n", encoding="utf-8")
+    (early_router / "supply_map_MET3.csv").write_text("7,6\n9,10\n", encoding="utf-8")
 
     service = ECCService()
     extract = service.extract_foundation_data(
@@ -332,6 +356,14 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
         "col": 0,
         "value": 1.0,
     }
+
+    congestion = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "maps", "entity": "congestion", "stage": "place"})
+    )
+    assert congestion.response == ResponseEnum.success.value
+    assert congestion.data["content"]["category"] == "congestion"
+    assert [item["value"] for item in congestion.data["content"]["maps"]["horizontal"]["values"]] == [-2.0, -2.0, 3.0, -1.0]
+    assert [item["value"] for item in congestion.data["content"]["maps"]["vertical"]["values"]] == [-5.0, -2.0, -5.0, -1.0]
 
 
 def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):

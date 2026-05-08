@@ -9,4 +9,4 @@
 	url = https://github.com/YihangQiu/ecc.git
 [submodule "ecos/agent"]
 	path = ecos/agent
-	url = https://github.com/YihangQiu/eda-agent-dev.git
+	url = git@github.com:openecos-projects/eda-agent.git

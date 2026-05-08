@@ -6,7 +6,7 @@
 	url = https://github.com/openecos-projects/icsprout55-pdk.git
 [submodule "ecc"]
 	path = ecc
-	url = https://github.com/openecos-projects/ecc.git
+	url = https://github.com/YihangQiu/ecc.git
 [submodule "ecos/agent"]
 	path = ecos/agent
 	url = https://github.com/YihangQiu/eda-agent-dev.git

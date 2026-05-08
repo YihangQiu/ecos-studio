@@ -14,7 +14,7 @@ ECOS Studio is a desktop application that provides an integrated development env
 
 - [ECOS-Studio AppImage (amd64)](https://github.com/openecos-projects/ecos-studio/releases/latest/)
 
-For Linux Desktop x86_64 users, you can download the latest ECOS Studio AppImage from the releases page. After downloading, make the file executable and run it to launch ECOS Studio.
+[AppImage](https://en.wikipedia.org/wiki/AppImage) is a portable Linux application format — download a single file, make it executable, and run it without installation. ECOS Studio is a GUI application and requires a desktop environment (X11 or Wayland) to run — it cannot be launched from a headless environment. For Linux Desktop x86_64 users, you can download the latest ECOS Studio AppImage from the releases page.
 ```shell
 # Download and run ECOS Studio on Linux x86_64
 wget https://github.com/openecos-projects/ecos-studio/releases/latest/download/<latest-release-file>.AppImage
@@ -62,6 +62,29 @@ URL sent by the GUI. Verify it before using the chat panel:
 ```bash
 curl http://127.0.0.1:8766/health
 curl http://127.0.0.1:8766/api/agent/capabilities
+```
+
+Rust-side GUI logs default to warnings and errors. Use `RUST_LOG` when you need
+more detail while debugging the Tauri shell:
+
+```bash
+# GUI lifecycle diagnostics
+cd ecos/gui && RUST_LOG=ecos_studio=info pnpm tauri dev
+
+# More detailed API server startup diagnostics
+cd ecos/gui && RUST_LOG=ecos_studio::api_server=debug pnpm tauri dev
+```
+
+Python API server startup markers (`[API_PHASE]`, `[API_START]`, `[API_READY]`,
+`[API_LOG]`) are suppressed by default. Set `ECOS_API_LOG_LEVEL=info` to show
+them, or pass `--log-level info` to `run_server.py`:
+
+```bash
+# Show API server startup phases
+ECOS_API_LOG_LEVEL=info cd ecos/server && python run_server.py
+
+# Equivalent via CLI flag
+cd ecos/server && python run_server.py --log-level info
 ```
 
 ### DreamPlace Development

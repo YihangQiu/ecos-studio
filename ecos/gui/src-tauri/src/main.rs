@@ -7,7 +7,7 @@ mod tile_cache;
 mod window_commands;
 
 use api_server::{
-    get_api_port, start_api_server, stop_api_server, ActualApiPort, ApiServerProcess,
+    get_api_port, get_versions, start_api_server, stop_api_server, ActualApiPort, ApiServerProcess,
     ApiStartResult, DEFAULT_API_PORT,
 };
 use std::path::PathBuf;
@@ -26,13 +26,9 @@ use tile_cache::{
 use window_commands::{clamp_window_to_monitor, window_close, window_maximize, window_minimize};
 
 fn main() {
-    // Default: third-party crates stay at `warn`, but our own crate emits `info`
-    // so key lifecycle logs (API server spawn / readiness / timing) are visible
-    // in the terminal when running the packaged AppImage. `RUST_LOG` still wins.
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn,ecos_studio=info"),
-    )
-    .init();
+    // Default to warnings/errors. Users can opt into more detail with RUST_LOG,
+    // for example: RUST_LOG=ecos_studio=info or RUST_LOG=ecos_studio::api_server=debug.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     // Shared state for the API server process and discovered port
     let api_server: ApiServerProcess = Arc::new(Mutex::new(None));
@@ -147,7 +143,8 @@ fn main() {
             window_minimize,
             window_maximize,
             window_close,
-            get_api_port
+            get_api_port,
+            get_versions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

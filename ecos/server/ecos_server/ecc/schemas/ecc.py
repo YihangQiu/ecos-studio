@@ -14,6 +14,14 @@ class CMDEnum(Enum):
     rtl2gds = "rtl2gds"
     run_step = "run_step"
     get_info = "get_info"
+    get_flow_status = "get_flow_status"
+    get_artifact = "get_artifact"
+    extract_foundation_data = "extract_foundation_data"
+    get_foundation_data = "get_foundation_data"
+    clone_workspace = "clone_workspace"
+    run_from_step = "run_from_step"
+    update_parameters = "update_parameters"
+    update_step_config = "update_step_config"
     notify = "notify"
 
 

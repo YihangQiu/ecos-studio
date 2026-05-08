@@ -13,3 +13,6 @@ result
 # Claude Code
 .claude/
 .humanize*
+
+# Local ECOS Studio release artifacts
+*.AppImage

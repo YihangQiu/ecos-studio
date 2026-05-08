@@ -76,6 +76,34 @@ make demo-gcd           # GCD example
 make demo-retrosoc      # retroSoC example
 ```
 
+### EDAbot Agent integration
+
+The GUI AI chat panel talks to EDAbot through a separate local Agent API.
+Start the ECOS API server first, then run EDAbot manually in another terminal:
+
+```bash
+# ECOS API health check; expected: {"status": "ok", ...}
+curl -s http://127.0.0.1:8765/health | jq
+
+# Start EDAbot Agent API on the default GUI port.
+cd ../eda-agent-dev
+EDABOT_ECOS_API_BASE_URL=http://127.0.0.1:8765 \
+  .venv/bin/python -m edabot.cli serve --host 127.0.0.1 --port 8766
+```
+
+Verify the Agent before using the GUI chat panel:
+
+```bash
+curl -s http://127.0.0.1:8766/health | jq
+curl -s http://127.0.0.1:8766/api/agent/capabilities | jq
+```
+
+The GUI does not start EDAbot as a sidecar in this version. If the Agent is
+not running, the chat panel keeps the user's message and shows an explicit
+`edabot serve` startup hint. Agent events are delivered on
+`/api/agent/events/{session_id}` and are independent from workspace progress
+events.
+
 For development setup, release wheel usage, and release build details, see [ecos/README.md](ecos/README.md).
 
 ## Documentation

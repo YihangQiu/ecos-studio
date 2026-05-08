@@ -1,0 +1,507 @@
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+
+from ecos_server.ecc.schemas import ECCRequest, ResponseEnum
+from ecos_server.ecc.services.ecc import ECCService
+
+
+def _workspace(tmp_path: Path) -> Path:
+    root = tmp_path / "ws"
+    (root / "home").mkdir(parents=True)
+    (root / "log").mkdir()
+    (root / "place_dreamplace" / "analysis").mkdir(parents=True)
+    (root / "place_dreamplace" / "log").mkdir(parents=True)
+    (root / "home" / "flow.json").write_text(
+        json.dumps({"steps": [{"name": "place", "tool": "dreamplace", "state": "Success"}]}),
+        encoding="utf-8",
+    )
+    (root / "home" / "parameters.json").write_text(
+        json.dumps({"Core": {"Utilitization": 0.4}, "Target density": 0.3}),
+        encoding="utf-8",
+    )
+    (root / "place_dreamplace" / "analysis" / "place_metrics.json").write_text(
+        json.dumps({"wns": -0.1}),
+        encoding="utf-8",
+    )
+    (root / "log" / "secret.log").write_text("api_key=abc123\nnormal line", encoding="utf-8")
+    return root
+
+
+def test_get_artifact_rejects_workspace_escape(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.get_artifact(
+        ECCRequest(cmd="get_artifact", data={"directory": str(ws), "path": "../outside.txt"})
+    )
+    assert response.response == ResponseEnum.error.value
+    assert "outside workspace" in response.message[0]
+
+
+def test_get_artifact_reads_text_with_redaction(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.get_artifact(
+        ECCRequest(cmd="get_artifact", data={"directory": str(ws), "path": "log/secret.log"})
+    )
+    assert response.response == ResponseEnum.success.value
+    assert "api_key=<redacted>" in response.data["content"]
+    assert "abc123" not in response.data["content"]
+
+
+def test_extract_foundation_data_writes_manifest_and_stale_detection(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    extract = service.extract_foundation_data(ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws)}))
+    assert extract.response == ResponseEnum.success.value
+    manifest = Path(extract.data["manifest_path"])
+    assert manifest.exists()
+    assert extract.data["stale"] is False
+
+    time.sleep(0.01)
+    (ws / "home" / "flow.json").write_text(json.dumps({"steps": []}), encoding="utf-8")
+    status = service.get_foundation_data(ECCRequest(cmd="get_foundation_data", data={"directory": str(ws)}))
+    assert status.response == ResponseEnum.warning.value
+    assert status.data["stale"] is True
+
+
+def test_update_parameters_allows_whitelist_and_utilization_alias(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.update_parameters(
+        ECCRequest(
+            cmd="update_parameters",
+            data={
+                "directory": str(ws),
+                "parameters": {"Core.Utilization": 0.55, "PDK Root": "/secret/pdk"},
+                "write": True,
+            },
+        )
+    )
+    assert response.response == ResponseEnum.warning.value
+    assert response.data["updated"] == {"Core.Utilitization": 0.55}
+    assert "PDK Root" in response.data["rejected"]
+    params = json.loads((ws / "home" / "parameters.json").read_text(encoding="utf-8"))
+    assert params["Core"]["Utilitization"] == 0.55
+
+
+def test_update_step_config_writes_audit_only(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.update_step_config(
+        ECCRequest(
+            cmd="update_step_config",
+            data={"directory": str(ws), "step": "place", "config": {"PL.GP.Density.target_density": 0.6}},
+        )
+    )
+    assert response.response == ResponseEnum.success.value
+    assert response.data["effective_on_next_run"] is False
+    audit = json.loads((ws / "home" / "strategy_overrides.json").read_text(encoding="utf-8"))
+    assert audit["overrides"][-1]["step"] == "place"
+    assert audit["overrides"][-1]["path"] == "PL.GP.Density.target_density"
+
+
+def test_update_step_config_rejects_non_whitelisted_paths(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.update_step_config(
+        ECCRequest(
+            cmd="update_step_config",
+            data={"directory": str(ws), "step": "place", "config": {"note": "not a real ECOS config path"}},
+        )
+    )
+    assert response.response == ResponseEnum.failed.value
+    assert response.data["rejected"] == {"note": "not a real ECOS config path"}
+    assert not (ws / "home" / "strategy_overrides.json").exists()
+
+
+def test_cleanup_stale_outputs_removes_step_and_downstream_artifacts(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    (ws / "CTS_ecc" / "output").mkdir(parents=True)
+    (ws / "CTS_ecc" / "log").mkdir(parents=True)
+    (ws / "place_dreamplace" / "output").mkdir(parents=True)
+    (ws / "place_dreamplace" / "config").mkdir(parents=True)
+    (ws / "place_dreamplace" / "output" / "old.def").write_text("old", encoding="utf-8")
+    (ws / "place_dreamplace" / "analysis" / "old.json").write_text("{}", encoding="utf-8")
+    (ws / "place_dreamplace" / "config" / "keep.json").write_text("{}", encoding="utf-8")
+    (ws / "CTS_ecc" / "output" / "old.def").write_text("old", encoding="utf-8")
+    (ws / "CTS_ecc" / "log" / "old.log").write_text("old", encoding="utf-8")
+    (ws / "home" / "flow.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"name": "place", "tool": "dreamplace", "state": "Success"},
+                    {"name": "CTS", "tool": "ecc", "state": "Success"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    removed = service._cleanup_stale_step_artifacts(ws, "place")
+
+    assert "place_dreamplace/output/old.def" in removed
+    assert "place_dreamplace/analysis/old.json" in removed
+    assert "CTS_ecc/output/old.def" in removed
+    assert "CTS_ecc/log/old.log" in removed
+    assert (ws / "place_dreamplace" / "output").is_dir()
+    assert (ws / "place_dreamplace" / "analysis").is_dir()
+    assert (ws / "CTS_ecc" / "output").is_dir()
+    assert (ws / "CTS_ecc" / "log").is_dir()
+    assert (ws / "place_dreamplace" / "config" / "keep.json").exists()
+
+
+def test_clone_workspace_rewrites_embedded_workspace_paths(tmp_path: Path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    (source / "home").mkdir(parents=True)
+    (source / "route_ecc" / "config").mkdir(parents=True)
+    (source / "route_ecc" / "subflow.json").write_text(
+        json.dumps({"path": str(source / "route_ecc" / "subflow.json")}),
+        encoding="utf-8",
+    )
+    (source / "route_ecc" / "config" / "db_default_config.json").write_text(
+        json.dumps(
+            {
+                "INPUT": {
+                    "def_path": str(source / "legalization_dreamplace" / "output" / "gcd.def.gz")
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (source / "home" / "home.json").write_text(
+        json.dumps({"flow": str(source / "home" / "flow.json")}),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    response = service.clone_workspace(
+        ECCRequest(
+            cmd="clone_workspace",
+            data={"directory": str(source), "target_directory": str(target)},
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    target_db = json.loads(
+        (target / "route_ecc" / "config" / "db_default_config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    target_subflow = json.loads(
+        (target / "route_ecc" / "subflow.json").read_text(encoding="utf-8")
+    )
+    target_home = json.loads((target / "home" / "home.json").read_text(encoding="utf-8"))
+    combined = json.dumps([target_db, target_subflow, target_home])
+    assert str(source) not in combined
+    assert str(target) in combined
+
+
+def test_prepare_rerun_rebuilds_cloned_step_config_paths(tmp_path: Path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    route_dir = target / "route_ecc"
+    (source / "home").mkdir(parents=True)
+    (target / "home").mkdir(parents=True)
+    (route_dir / "config").mkdir(parents=True)
+    (target / "legalization_dreamplace" / "output").mkdir(parents=True)
+    (target / "origin").mkdir(parents=True)
+    (target / "home" / "flow.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"name": "legalization", "tool": "dreamplace", "state": "Success"},
+                    {"name": "route", "tool": "ecc", "state": "Success"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (route_dir / "config" / "db_default_config.json").write_text(
+        json.dumps({"INPUT": {"def_path": str(source / "old.def.gz")}}),
+        encoding="utf-8",
+    )
+    (route_dir / "config" / "rt_default_config.json").write_text(
+        json.dumps({"RT": {"-temp_directory_path": str(source / "route_ecc" / "data" / "rt")}}),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    rebuilt = service._prepare_rerun_step_configs(target, "route")
+
+    assert "route_ecc/config/db_default_config.json" in rebuilt
+    assert "route_ecc/config/rt_default_config.json" in rebuilt
+    db_config = json.loads(
+        (route_dir / "config" / "db_default_config.json").read_text(encoding="utf-8")
+    )
+    rt_config = json.loads(
+        (route_dir / "config" / "rt_default_config.json").read_text(encoding="utf-8")
+    )
+    assert str(source) not in json.dumps([db_config, rt_config])
+    assert db_config["INPUT"]["def_path"] == str(
+        target / "legalization_dreamplace" / "output" / "gcd_legalization.def.gz"
+    )
+    assert rt_config["RT"]["-temp_directory_path"] == str(route_dir / "data" / "rt")
+
+
+def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    stage = ws / "place_dreamplace"
+    (stage / "output").mkdir(parents=True)
+    (stage / "feature" / "density_map").mkdir(parents=True)
+    (stage / "feature" / "gcell_patch_map" / "density_map").mkdir(parents=True)
+    early_router = stage / "data" / "rt" / "rt_temp_directory" / "early_router"
+    early_router.mkdir(parents=True)
+    (stage / "output" / "gcd_place.json").write_text(
+        json.dumps(
+            {
+                "design name": "gcd",
+                "diearea": {"path": [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]]},
+                "data": [
+                    {
+                        "type": "group",
+                        "struct name": "Instance_U1",
+                        "children": [
+                            {"type": "box", "layer": 0, "path": [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (stage / "feature" / "density_map" / "place_allcell_density.csv").write_text("1,2\n3,4\n", encoding="utf-8")
+    (stage / "feature" / "gcell_patch_map" / "density_map" / "place_allcell_density.csv").write_text("1,2\n3,4\n", encoding="utf-8")
+    (early_router / "gcell.info").write_text(
+        "0,0,0,0,10,10\n0,1,0,10,10,20\n1,0,10,0,20,10\n1,1,10,10,20,20\n",
+        encoding="utf-8",
+    )
+    (early_router / "route.guide").write_text(
+        "\n".join(
+            [
+                "guide net_name",
+                "pin grid_x grid_y real_x real_y layer energy name",
+                "wire grid1_x grid1_y grid2_x grid2_y real1_x real1_y real2_x real2_y layer",
+                "via grid_x grid_y real_x real_y layer1 layer2",
+                "guide n1",
+                "wire 0 0 1 0 0 0 10 0 MET2",
+                "wire 0 0 0 1 0 0 0 10 MET3",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (early_router / "net_map_MET2.csv").write_text("8,0\n1,2\n", encoding="utf-8")
+    (early_router / "supply_map_MET2.csv").write_text("5,1\n3,4\n", encoding="utf-8")
+    (early_router / "net_map_MET3.csv").write_text("2,5\n4,8\n", encoding="utf-8")
+    (early_router / "supply_map_MET3.csv").write_text("7,6\n9,10\n", encoding="utf-8")
+
+    service = ECCService()
+    extract = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={"directory": str(ws), "profile": "iccd_full_v1", "include_raw_refs": True},
+        )
+    )
+    assert extract.response == ResponseEnum.success.value
+    assert extract.data["profile"] == "iccd_full_v1"
+    manifest = extract.data["manifest"]
+    assert set(manifest) == {"options", "workspace", "sources", "artifacts"}
+    assert "version" not in manifest
+    assert "profile" not in manifest
+    assert "created_at" not in manifest
+    assert "home/flow.json" in manifest["sources"]
+    assert "place_dreamplace/analysis/place_metrics.json" in manifest["sources"]
+    assert all(not Path(source).is_absolute() for source in manifest["sources"])
+    assert manifest["artifacts"]["canonical_grid"] == "foundation_data/ecc/canonical_grid.json"
+
+    indexed = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "place", "index_only": True},
+        )
+    )
+    assert indexed.response == ResponseEnum.success.value
+    assert indexed.data["kind"] == "vectors"
+    assert indexed.data["entity"] == "instances"
+    assert indexed.data["stage"] == "place"
+    assert indexed.data["content"]["path"].endswith("vectors/instances/place.jsonl")
+    assert indexed.data["content"]["record_count"] == 1
+
+    grid = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "canonical_grid"})
+    )
+    assert grid.response == ResponseEnum.success.value
+    assert grid.data["content"]["rows"] == 2
+
+    for kind in ("summary", "quality", "agent_view", "ml_view"):
+        response = service.get_foundation_data(ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": kind}))
+        assert response.response == ResponseEnum.success.value
+        assert response.data["kind"] == kind
+
+    maps = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "maps", "entity": "density", "stage": "place"})
+    )
+    assert maps.response == ResponseEnum.success.value
+    assert maps.data["content"]["stage"] == "place"
+    assert maps.data["content"]["category"] == "density"
+    assert "place_allcell_density" not in maps.data["content"]["maps"]
+    assert maps.data["content"]["maps"]["allcell_density"]["values"][0] == {
+        "patch_id": 0,
+        "row": 0,
+        "col": 0,
+        "value": 1.0,
+    }
+
+    congestion = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "maps", "entity": "congestion", "stage": "place"})
+    )
+    assert congestion.response == ResponseEnum.success.value
+    assert congestion.data["content"]["category"] == "congestion"
+    assert [item["value"] for item in congestion.data["content"]["maps"]["horizontal"]["values"]] == [-2.0, -2.0, 3.0, -1.0]
+    assert [item["value"] for item in congestion.data["content"]["maps"]["vertical"]["values"]] == [-5.0, -2.0, -5.0, -1.0]
+
+
+def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    service.extract_foundation_data(
+        ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws), "profile": "iccd_full_v1"})
+    )
+
+    bad_kind = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "../../home/flow"})
+    )
+    bad_entity = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "../instances", "stage": "place"},
+        )
+    )
+    bad_stage_parent = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": ".."},
+        )
+    )
+    bad_stage_abs = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "/tmp/place"},
+        )
+    )
+    bad_stage_token = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "place/../../x"},
+        )
+    )
+
+    assert bad_kind.response == ResponseEnum.error.value
+    assert "unsupported foundation data kind" in bad_kind.message[0]
+    assert bad_entity.response == ResponseEnum.error.value
+    assert "invalid foundation data entity" in bad_entity.message[0]
+    assert bad_stage_parent.response == ResponseEnum.error.value
+    assert "invalid foundation data stage" in bad_stage_parent.message[0]
+    assert bad_stage_abs.response == ResponseEnum.error.value
+    assert "invalid foundation data stage" in bad_stage_abs.message[0]
+    assert bad_stage_token.response == ResponseEnum.error.value
+    assert "invalid foundation data stage" in bad_stage_token.message[0]
+
+
+def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    service.extract_foundation_data(
+        ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws), "profile": "iccd_full_v1", "force": "false"})
+    )
+
+    response = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "place", "index_only": "false"},
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    assert "records" in response.data["content"]
+
+
+def test_iccd_foundation_stale_detects_new_source_files(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    service.extract_foundation_data(
+        ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws), "profile": "iccd_full_v1"})
+    )
+
+    time.sleep(0.01)
+    new_csv = ws / "place_dreamplace" / "feature" / "density_map" / "new_density.csv"
+    new_csv.parent.mkdir(parents=True, exist_ok=True)
+    new_csv.write_text("1,2\n", encoding="utf-8")
+
+    status = service.get_foundation_data(ECCRequest(cmd="get_foundation_data", data={"directory": str(ws)}))
+
+    assert status.response == ResponseEnum.warning.value
+    assert status.data["stale"] is True
+
+
+def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    stage = ws / "place_dreamplace"
+    (stage / "output").mkdir(parents=True)
+    (stage / "output" / "gcd_place.json").write_text(
+        json.dumps(
+            {
+                "design name": "gcd",
+                "diearea": {"path": [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]]},
+                "data": [
+                    {
+                        "type": "group",
+                        "struct name": "Instance_U1",
+                        "children": [
+                            {"type": "box", "layer": 0, "path": [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={
+                "directory": str(ws),
+                "profile": "iccd_full_v1",
+                "stages": ["place"],
+                "include_raw_refs": "false",
+            },
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    manifest = response.data["manifest"]
+    assert manifest["options"] == {"stages": ["place"], "include_raw_refs": False}
+    assert "raw_refs" not in manifest["artifacts"]
+    assert [item["name"] for item in response.data["summary"]["flow"]["steps"]] == ["place"]
+    assert not (ws / "foundation_data" / "ecc" / "raw_refs" / "artifacts.json").exists()
+
+
+def test_extract_foundation_data_rejects_unknown_stage_filter(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={"directory": str(ws), "profile": "iccd_full_v1", "stages": ["route"]},
+        )
+    )
+
+    assert response.response == ResponseEnum.error.value
+    assert "unknown foundation extraction stage" in response.message[0]

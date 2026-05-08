@@ -75,6 +75,54 @@ def get_info(request: ECCRequest):
     return ecc_serv.dispatch(request)
 
 
+@router.post("/get_flow_status", response_model=ECCResponse)
+def get_flow_status(request: ECCRequest):
+    """Return flow, foundation freshness, and async task status for a workspace."""
+    return ecc_serv.dispatch(request)
+
+
+@router.post("/get_artifact", response_model=ECCResponse)
+def get_artifact(request: ECCRequest):
+    """Read a redacted, workspace-confined text artifact."""
+    return ecc_serv.dispatch(request)
+
+
+@router.post("/extract_foundation_data", response_model=ECCResponse)
+def extract_foundation_data(request: ECCRequest):
+    """Extract read-only foundation summaries under foundation_data/ecc."""
+    return ecc_serv.dispatch(request)
+
+
+@router.post("/get_foundation_data", response_model=ECCResponse)
+def get_foundation_data(request: ECCRequest):
+    """Read extracted foundation summaries and stale status."""
+    return ecc_serv.dispatch(request)
+
+
+@router.post("/clone_workspace", response_model=ECCResponse)
+def clone_workspace(request: ECCRequest):
+    """Clone a workspace without switching the global loaded workspace."""
+    return ecc_serv.dispatch(request)
+
+
+@router.post("/run_from_step", response_model=ECCResponse)
+def run_from_step(request: ECCRequest):
+    """Queue background execution from a flow step."""
+    return ecc_serv.dispatch(request)
+
+
+@router.post("/update_parameters", response_model=ECCResponse)
+def update_parameters(request: ECCRequest):
+    """Apply guarded parameter updates to home/parameters.json."""
+    return ecc_serv.dispatch(request)
+
+
+@router.post("/update_step_config", response_model=ECCResponse)
+def update_step_config(request: ECCRequest):
+    """Record strategy config suggestions in an audit file only."""
+    return ecc_serv.dispatch(request)
+
+
 @router.post("/get_home_page", response_model=ECCResponse)
 def get_home_page(request: ECCRequest):
     """

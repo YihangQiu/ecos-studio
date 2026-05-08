@@ -178,8 +178,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
+
+      - name: Checkout build submodules
+        run: |
+          git submodule sync --recursive ecc ip/retroSoC pdk/icsprout55-pdk
+          git submodule update --init --recursive ecc ip/retroSoC pdk/icsprout55-pdk
 
       - name: Install system dependencies
         uses: ./.github/actions/install-tauri-linux-deps

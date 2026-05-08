@@ -5,7 +5,7 @@
   "type": "module",
   "pnpm": {
     "overrides": {
-      "pixi.js": "$pixi.js"
+      "pixi.js": "^8.15.0"
     }
   },
   "scripts": {

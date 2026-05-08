@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -148,6 +148,7 @@ def _summarize_request(data: object) -> dict:
 def _foundation_extractor_class():
     try:
         from chipcompiler.data.foundation import FoundationExtractor
+
         return FoundationExtractor
     except ModuleNotFoundError:
         local_ecc = Path(__file__).resolve().parents[5] / "ecc"
@@ -165,6 +166,7 @@ def _foundation_extractor_class():
                 if data_pkg_path not in getattr(data_pkg, "__path__", []):
                     data_pkg.__path__.append(data_pkg_path)
             from chipcompiler.data.foundation import FoundationExtractor
+
             return FoundationExtractor
         raise
 
@@ -177,7 +179,12 @@ def _jsonl_record_count(path: Path) -> int:
 
 
 def _validate_foundation_token(name: str, value: str) -> None:
-    if value in {".", ".."} or "/" in value or "\\" in value or not _FOUNDATION_TOKEN_RE.fullmatch(value):
+    if (
+        value in {".", ".."}
+        or "/" in value
+        or "\\" in value
+        or not _FOUNDATION_TOKEN_RE.fullmatch(value)
+    ):
         raise ValueError(f"invalid foundation data {name}: {value}")
 
 
@@ -338,7 +345,11 @@ class ECCService:
         if not rel:
             raise ValueError("missing artifact path")
         candidate = Path(rel).expanduser()
-        path = candidate.resolve() if candidate.is_absolute() else (workspace_dir / candidate).resolve()
+        path = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (workspace_dir / candidate).resolve()
+        )
         if not path.is_relative_to(workspace_dir):
             raise ValueError(f"path is outside workspace: {relative_path}")
         return path
@@ -421,7 +432,11 @@ class ECCService:
         return sorted(set(paths))
 
     def _foundation_v2_source_signature(self, workspace_dir: Path) -> list[str]:
-        return [str(path.relative_to(workspace_dir)) for path in self._foundation_v2_source_paths(workspace_dir) if path.exists()]
+        return [
+            str(path.relative_to(workspace_dir))
+            for path in self._foundation_v2_source_paths(workspace_dir)
+            if path.exists()
+        ]
 
     def _foundation_v2_source_mtime_signature(self, workspace_dir: Path) -> dict[str, float]:
         return self._source_signature(self._foundation_v2_source_paths(workspace_dir))
@@ -687,11 +702,15 @@ class ECCService:
                 "directory": str(workspace_dir),
                 "flow": flow,
                 "steps": flow.get("steps", []),
-                "foundation_stale": self._foundation_is_stale(workspace_dir, manifest) if manifest else True,
+                "foundation_stale": self._foundation_is_stale(workspace_dir, manifest)
+                if manifest
+                else True,
                 "tasks": self._task_snapshot(workspace_dir),
             }
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.success.value,
@@ -730,7 +749,9 @@ class ECCService:
                 "content": self._redact_text(content),
             }
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.success.value,
@@ -748,7 +769,9 @@ class ECCService:
                 result = extractor_cls(workspace_dir, profile=profile).extract(
                     force=_parse_bool(request.data.get("force", False)),
                     stages=request.data.get("stages", "all"),
-                    include_raw_refs=_parse_bool(request.data.get("include_raw_refs", True), default=True),
+                    include_raw_refs=_parse_bool(
+                        request.data.get("include_raw_refs", True), default=True
+                    ),
                 )
                 manifest = result.manifest
                 data = {
@@ -766,7 +789,7 @@ class ECCService:
                 manifest = {
                     "version": 1,
                     "workspace": str(workspace_dir),
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     "sources": self._source_signature(sources),
                     "artifacts": {
                         "summary": str(foundation_dir / "summary.json"),
@@ -775,7 +798,9 @@ class ECCService:
                 }
                 self._write_json(foundation_dir / "summary.json", payload)
                 self._write_json(foundation_dir / "metrics.json", {"metrics": payload["metrics"]})
-                self._write_json(foundation_dir / "parameters.json", {"parameters": payload["parameters"]})
+                self._write_json(
+                    foundation_dir / "parameters.json", {"parameters": payload["parameters"]}
+                )
                 self._write_json(self._manifest_path(workspace_dir), manifest)
                 data = {
                     "directory": str(workspace_dir),
@@ -786,7 +811,9 @@ class ECCService:
                     "summary": payload,
                 }
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.success.value,
@@ -816,7 +843,11 @@ class ECCService:
                     "record_count": _jsonl_record_count(target),
                 }
                 if not index_only and target.exists():
-                    content["records"] = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines() if line.strip()]
+                    content["records"] = [
+                        json.loads(line)
+                        for line in target.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    ]
             else:
                 content = self._read_json(target)
             stale = self._foundation_is_stale(workspace_dir, manifest) if manifest else True
@@ -831,7 +862,9 @@ class ECCService:
                 "content": content,
             }
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.warning.value if data["stale"] else ResponseEnum.success.value,
@@ -840,7 +873,9 @@ class ECCService:
         )
 
     @staticmethod
-    def _foundation_kind_path(foundation_dir: Path, kind: str, *, entity: str = "", stage: str = "") -> Path:
+    def _foundation_kind_path(
+        foundation_dir: Path, kind: str, *, entity: str = "", stage: str = ""
+    ) -> Path:
         if kind not in _FOUNDATION_KINDS:
             raise ValueError(f"unsupported foundation data kind: {kind}")
         if kind == "manifest":
@@ -892,7 +927,9 @@ class ECCService:
             )
             rewritten = self._relocate_workspace_paths(target_dir, source_dir)
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.success.value,
@@ -905,10 +942,16 @@ class ECCService:
             message=[f"workspace cloned: {target_dir}"],
         )
 
-    def _run_from_step_worker(self, task_id: str, workspace_dir: Path, start_step: str, rerun: bool) -> None:
+    def _run_from_step_worker(
+        self, task_id: str, workspace_dir: Path, start_step: str, rerun: bool
+    ) -> None:
         def update(**fields) -> None:
             with _TASKS_LOCK:
-                _TASKS[task_id] = {**_TASKS.get(task_id, {}), **fields, "updated_at": datetime.now(timezone.utc).isoformat()}
+                _TASKS[task_id] = {
+                    **_TASKS.get(task_id, {}),
+                    **fields,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
 
         lock = self._workspace_lock(workspace_dir)
         if not lock.acquire(blocking=False):
@@ -917,7 +960,9 @@ class ECCService:
         try:
             update(status="running")
             service = ECCService()
-            load = service.load_workspace(ECCRequest(cmd="load_workspace", data={"directory": str(workspace_dir)}))
+            load = service.load_workspace(
+                ECCRequest(cmd="load_workspace", data={"directory": str(workspace_dir)})
+            )
             if load.response != ResponseEnum.success.value:
                 update(status="failed", error="; ".join(load.message))
                 return
@@ -935,15 +980,32 @@ class ECCService:
                     ECCResponse(
                         cmd=CMDEnum.notify.value,
                         response=ResponseEnum.success.value,
-                        data={"type": "flow_progress", "task_id": task_id, "step": step, "status": "running"},
+                        data={
+                            "type": "flow_progress",
+                            "task_id": task_id,
+                            "step": step,
+                            "status": "running",
+                        },
                         message=[f"running {step}"],
                     ),
                 )
-                result = service.run_step(ECCRequest(cmd="run_step", data={"step": step, "rerun": rerun}))
+                result = service.run_step(
+                    ECCRequest(cmd="run_step", data={"step": step, "rerun": rerun})
+                )
                 if result.response != ResponseEnum.success.value:
-                    update(status="failed", current_step=step, result=result.model_dump(), error="; ".join(result.message))
+                    update(
+                        status="failed",
+                        current_step=step,
+                        result=result.model_dump(),
+                        error="; ".join(result.message),
+                    )
                     return
-            update(status="success", current_step="", error="", completed_at=datetime.now(timezone.utc).isoformat())
+            update(
+                status="success",
+                current_step="",
+                error="",
+                completed_at=datetime.now(UTC).isoformat(),
+            )
         except Exception as exc:
             logger.exception("run_from_step: background worker failed")
             update(status="error", error=str(exc))
@@ -963,8 +1025,8 @@ class ECCService:
                 "start_step": step,
                 "current_step": "",
                 "status": "queued",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
                 "error": "",
             }
             with _TASKS_LOCK:
@@ -976,7 +1038,9 @@ class ECCService:
             )
             thread.start()
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.success.value,
@@ -1014,12 +1078,16 @@ class ECCService:
                 "parameters_path": str(params_path),
             }
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.warning.value if data["rejected"] else ResponseEnum.success.value,
             data=data,
-            message=[f"updated parameters: {len(data['updated'])}; rejected: {len(data['rejected'])}"],
+            message=[
+                f"updated parameters: {len(data['updated'])}; rejected: {len(data['rejected'])}"
+            ],
         )
 
     def update_step_config(self, request: ECCRequest) -> ECCResponse:
@@ -1046,7 +1114,9 @@ class ECCService:
                         "rejected": rejected,
                         "effective_on_next_run": False,
                     },
-                    message=[f"rejected non-whitelisted step config paths: {', '.join(sorted(rejected))}"],
+                    message=[
+                        f"rejected non-whitelisted step config paths: {', '.join(sorted(rejected))}"
+                    ],
                 )
             audit_path = workspace_dir / "home" / "strategy_overrides.json"
             audit = self._read_json(audit_path) or {"version": 1, "overrides": []}
@@ -1054,7 +1124,7 @@ class ECCService:
             if not isinstance(overrides, list):
                 overrides = []
             reason = str(request.data.get("reason", "")).strip()
-            created_at = datetime.now(timezone.utc).isoformat()
+            created_at = datetime.now(UTC).isoformat()
             for path, value in accepted.items():
                 entry = {
                     "step": step,
@@ -1080,7 +1150,9 @@ class ECCService:
                 "effective_on_next_run": False,
             }
         except Exception as e:
-            return ECCResponse(cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)])
+            return ECCResponse(
+                cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
+            )
         return ECCResponse(
             cmd=request.cmd,
             response=ResponseEnum.success.value,

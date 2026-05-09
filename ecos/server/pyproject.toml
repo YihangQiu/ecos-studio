@@ -11,6 +11,7 @@ dependencies = [
   "ecc-dreamplace==0.1.0a2",
   "ecc-tools==0.1.0a2",
   "fastapi>=0.109",
+  "pyarrow>=15",
   "torch>=1.6.0",
   "uvicorn>=0.27",
 ]

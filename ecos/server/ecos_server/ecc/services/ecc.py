@@ -33,8 +33,12 @@ _FOUNDATION_KINDS = {
     "stage_index",
     "canonical_grid",
     "quality",
+    "schema",
+    "table_index",
     "ml_view",
     "agent_view",
+    "task_view",
+    "query_table",
     "vectors",
     "maps",
 }
@@ -49,6 +53,9 @@ _FOUNDATION_VECTOR_ENTITIES = {
 }
 _FOUNDATION_MAP_ENTITIES = {"density", "congestion", "rudy", "margin", "other"}
 _FOUNDATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_FOUNDATION_SCHEMA_VERSION = "foundation-data-ecc-parquet-v1"
+_FOUNDATION_CONTRACT_NAME = "foundation_data/ecc"
+_FOUNDATION_STORAGE_FORMAT = "parquet+json_views"
 _TASKS: dict[str, dict] = {}
 _TASKS_LOCK = threading.Lock()
 _WORKSPACE_LOCKS: dict[str, threading.Lock] = {}
@@ -202,6 +209,23 @@ def _parse_bool(value: object, *, default: bool = False) -> bool:
         if normalized in {"0", "false", "f", "no", "n", "off", ""}:
             return False
     raise ValueError(f"invalid boolean value: {value}")
+
+
+def _parse_foundation_patch_id(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("query_table patch_id must be a non-negative integer")
+    if isinstance(value, int):
+        patch_id = value
+    elif isinstance(value, str):
+        normalized = value.strip()
+        if not re.fullmatch(r"\d+", normalized):
+            raise ValueError("query_table patch_id must be a non-negative integer")
+        patch_id = int(normalized)
+    else:
+        raise ValueError("query_table patch_id must be a non-negative integer")
+    if patch_id < 0:
+        raise ValueError("query_table patch_id must be a non-negative integer")
+    return patch_id
 
 
 class ECCService:
@@ -772,6 +796,9 @@ class ECCService:
                     include_raw_refs=_parse_bool(
                         request.data.get("include_raw_refs", True), default=True
                     ),
+                    export_legacy_debug=_parse_bool(
+                        request.data.get("export_legacy_debug", False), default=False
+                    ),
                 )
                 manifest = result.manifest
                 data = {
@@ -831,25 +858,36 @@ class ECCService:
             stage = str(request.data.get("stage", "")).strip()
             index_only = _parse_bool(request.data.get("index_only", False))
             foundation_dir = workspace_dir / _FOUNDATION_DIR
-            target = self._foundation_kind_path(foundation_dir, kind, entity=entity, stage=stage)
-            foundation_root = foundation_dir.resolve()
-            target_resolved = target.resolve(strict=False)
-            if not target_resolved.is_relative_to(foundation_root):
-                raise ValueError("foundation data path escapes foundation directory")
-            if target.suffix == ".jsonl":
-                content = {
-                    "path": str(target),
-                    "relative_path": str(target.relative_to(foundation_dir)),
-                    "record_count": _jsonl_record_count(target),
-                }
-                if not index_only and target.exists():
-                    content["records"] = [
-                        json.loads(line)
-                        for line in target.read_text(encoding="utf-8").splitlines()
-                        if line.strip()
-                    ]
+            if kind == "query_table":
+                content = self._query_foundation_table(foundation_dir, request.data)
+            elif kind == "table_index":
+                content = dict(manifest.get("tables") or {})
+            elif kind == "schema":
+                content = self._read_json(foundation_dir / "schema.json")
+            elif kind == "task_view":
+                content = self._read_json(foundation_dir / "views" / "ml" / "task_views.json")
             else:
-                content = self._read_json(target)
+                target = self._foundation_kind_path(foundation_dir, kind, entity=entity, stage=stage)
+                foundation_root = foundation_dir.resolve()
+                target_resolved = target.resolve(strict=False)
+                if not target_resolved.is_relative_to(foundation_root):
+                    raise ValueError("foundation data path escapes foundation directory")
+                if kind in {"vectors", "maps"} and not target.exists():
+                    raise ValueError("legacy foundation data output is not available")
+                if target.suffix == ".jsonl":
+                    content = {
+                        "path": str(target),
+                        "relative_path": str(target.relative_to(foundation_dir)),
+                        "record_count": _jsonl_record_count(target),
+                    }
+                    if not index_only and target.exists():
+                        content["records"] = [
+                            json.loads(line)
+                            for line in target.read_text(encoding="utf-8").splitlines()
+                            if line.strip()
+                        ]
+                else:
+                    content = self._read_json(target)
             stale = self._foundation_is_stale(workspace_dir, manifest) if manifest else True
             data = {
                 "directory": str(workspace_dir),
@@ -871,6 +909,91 @@ class ECCService:
             data=data,
             message=[f"foundation data {'stale' if data['stale'] else 'current'}: {workspace_dir}"],
         )
+
+    def _query_foundation_table(self, foundation_dir: Path, data: dict) -> dict:
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as exc:  # pragma: no cover - dependency setup failure
+            raise RuntimeError("pyarrow is required for kind=query_table") from exc
+
+        manifest = self._read_json(foundation_dir / "manifest.json")
+        schema = self._read_json(foundation_dir / "schema.json")
+        if (
+            manifest.get("schema_version") != _FOUNDATION_SCHEMA_VERSION
+            or manifest.get("contract_name") != _FOUNDATION_CONTRACT_NAME
+            or manifest.get("storage_format") != _FOUNDATION_STORAGE_FORMAT
+            or schema.get("schema_version") != _FOUNDATION_SCHEMA_VERSION
+            or schema.get("contract_name") != _FOUNDATION_CONTRACT_NAME
+        ):
+            raise ValueError("unsupported foundation data contract")
+        table_name = str(data.get("table", "")).strip()
+        if not table_name:
+            raise ValueError("kind=query_table requires table")
+        _validate_foundation_token("table", table_name)
+        tables = manifest.get("tables") or {}
+        schema_tables = schema.get("tables") or {}
+        if table_name not in tables or table_name not in schema_tables:
+            raise ValueError(f"unsupported foundation table: {table_name}")
+        available_columns = set(schema_tables[table_name].get("columns") or [])
+        requested_columns = data.get("columns") or []
+        if requested_columns:
+            if not isinstance(requested_columns, list):
+                raise ValueError("query_table columns must be a list")
+            columns = [str(column).strip() for column in requested_columns]
+            for column in columns:
+                _validate_foundation_token("column", column)
+                if column not in available_columns:
+                    raise ValueError(f"unsupported foundation table column: {column}")
+        else:
+            columns = list(schema_tables[table_name].get("columns") or [])
+
+        filter_values: dict[str, object] = {}
+        if data.get("stage"):
+            stage = str(data["stage"]).strip()
+            _validate_foundation_token("stage", stage)
+            filter_values["stage_name"] = stage
+        if data.get("patch_id") is not None:
+            filter_values["patch_id"] = _parse_foundation_patch_id(data["patch_id"])
+        if data.get("entity_key"):
+            entity_key = str(data["entity_key"]).strip()
+            _validate_foundation_token("entity_key", entity_key)
+            filter_values["entity_key"] = entity_key
+        for column in filter_values:
+            if column not in available_columns:
+                raise ValueError(f"foundation table does not support filter column: {column}")
+
+        read_columns = sorted(set(columns) | set(filter_values))
+        table_rel = str(tables[table_name].get("path", ""))
+        if Path(table_rel).is_absolute() or Path(table_rel).suffix != ".parquet":
+            raise ValueError(f"invalid foundation table path: {table_name}")
+        table_path = foundation_dir / table_rel
+        foundation_root = foundation_dir.resolve()
+        target_resolved = table_path.resolve(strict=False)
+        if not target_resolved.is_relative_to(foundation_root):
+            raise ValueError("foundation table path escapes foundation directory")
+        if not table_path.exists():
+            raise ValueError(f"foundation table missing: {table_name}")
+
+        limit = int(data.get("limit") or 100)
+        if limit < 1:
+            raise ValueError("query_table limit must be positive")
+        limit = min(limit, 1000)
+        rows = pq.read_table(table_path, columns=read_columns).to_pylist()
+        filtered = [
+            row for row in rows
+            if all(row.get(column) == value for column, value in filter_values.items())
+        ]
+        projected = [{column: row.get(column) for column in columns} for row in filtered[:limit]]
+        return {
+            "table": table_name,
+            "schema_version": schema.get("schema_version"),
+            "columns": columns,
+            "filters": filter_values,
+            "row_count": len(filtered),
+            "returned_count": len(projected),
+            "truncated": len(filtered) > limit,
+            "records": projected,
+        }
 
     @staticmethod
     def _foundation_kind_path(

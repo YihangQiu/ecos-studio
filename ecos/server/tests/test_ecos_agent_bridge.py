@@ -320,16 +320,19 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
     extract = service.extract_foundation_data(
         ECCRequest(
             cmd="extract_foundation_data",
-            data={"directory": str(ws), "profile": "iccd_full_v1", "include_raw_refs": True},
+            data={"directory": str(ws), "profile": "iccd_full_v1", "include_raw_refs": True, "export_legacy_debug": True},
         )
     )
     assert extract.response == ResponseEnum.success.value
     assert extract.data["profile"] == "iccd_full_v1"
     manifest = extract.data["manifest"]
-    assert set(manifest) == {"options", "workspace", "sources", "artifacts"}
+    assert manifest["contract_name"] == "foundation_data/ecc"
+    assert manifest["storage_format"] == "parquet+json_views"
+    assert "tables" in manifest
     assert "version" not in manifest
     assert "profile" not in manifest
-    assert "created_at" not in manifest
+    assert manifest["created_at"]
+    assert manifest["generated_by"]["profile"] == "iccd_full_v1"
     assert "home/flow.json" in manifest["sources"]
     assert "place_dreamplace/analysis/place_metrics.json" in manifest["sources"]
     assert all(not Path(source).is_absolute() for source in manifest["sources"])
@@ -401,6 +404,199 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
         -5.0,
         -1.0,
     ]
+
+
+def test_get_foundation_data_exposes_parquet_schema_table_index_and_query(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    stage = ws / "place_dreamplace"
+    (stage / "output").mkdir(parents=True)
+    (stage / "feature" / "density_map").mkdir(parents=True)
+    (stage / "feature" / "gcell_patch_map" / "density_map").mkdir(parents=True)
+    early_router = stage / "data" / "rt" / "rt_temp_directory" / "early_router"
+    early_router.mkdir(parents=True)
+    (stage / "output" / "gcd_place.json").write_text(
+        json.dumps(
+            {
+                "design name": "gcd",
+                "diearea": {"path": [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]]},
+                "data": [
+                    {
+                        "type": "group",
+                        "struct name": "Instance_U1",
+                        "children": [
+                            {
+                                "type": "box",
+                                "layer": 0,
+                                "path": [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (stage / "feature" / "density_map" / "place_allcell_density.csv").write_text(
+        "1,2\n3,4\n", encoding="utf-8"
+    )
+    (
+        stage / "feature" / "gcell_patch_map" / "density_map" / "place_allcell_density.csv"
+    ).write_text("1,2\n3,4\n", encoding="utf-8")
+    (early_router / "gcell.info").write_text(
+        "0,0,0,0,10,10\n0,1,0,10,10,20\n1,0,10,0,20,10\n1,1,10,10,20,20\n",
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    extract = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={"directory": str(ws), "profile": "iccd_full_v1", "include_raw_refs": True},
+        )
+    )
+    assert extract.response == ResponseEnum.success.value
+
+    schema = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "schema"})
+    )
+    assert schema.response == ResponseEnum.success.value
+    assert schema.data["content"]["storage_format"] == "parquet+json_views"
+    assert "run_stage_patch_features" in schema.data["content"]["tables"]
+
+    table_index = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "table_index"})
+    )
+    assert table_index.response == ResponseEnum.success.value
+    assert table_index.data["content"]["patches"]["row_count"] == 4
+
+    task_view = service.get_foundation_data(
+        ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "task_view"})
+    )
+    assert task_view.response == ResponseEnum.success.value
+    assert "progressive_patch_route_demand_capacity" in task_view.data["content"]["tasks"]
+
+    query = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "run_stage_patch_features",
+                "stage": "place",
+                "patch_id": 0,
+                "columns": ["stage_name", "patch_id", "cell_density"],
+                "limit": 5,
+            },
+        )
+    )
+    assert query.response == ResponseEnum.success.value
+    assert query.data["content"]["table"] == "run_stage_patch_features"
+    assert query.data["content"]["row_count"] == 1
+    assert query.data["content"]["records"] == [
+        {"stage_name": "place", "patch_id": 0, "cell_density": 1.0}
+    ]
+    assert query.data["content"]["truncated"] is False
+
+
+def test_query_table_rejects_invalid_table_column_and_missing_legacy_vectors(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    stage = ws / "place_dreamplace"
+    (stage / "output").mkdir(parents=True)
+    (stage / "feature" / "gcell_patch_map" / "density_map").mkdir(parents=True)
+    early_router = stage / "data" / "rt" / "rt_temp_directory" / "early_router"
+    early_router.mkdir(parents=True)
+    (stage / "output" / "gcd_place.json").write_text(
+        json.dumps(
+            {
+                "design name": "gcd",
+                "diearea": {"path": [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]]},
+                "data": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (
+        stage / "feature" / "gcell_patch_map" / "density_map" / "place_allcell_density.csv"
+    ).write_text("1,2\n3,4\n", encoding="utf-8")
+    (early_router / "gcell.info").write_text(
+        "0,0,0,0,10,10\n0,1,0,10,10,20\n1,0,10,0,20,10\n1,1,10,10,20,20\n",
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    service.extract_foundation_data(
+        ECCRequest(cmd="extract_foundation_data", data={"directory": str(ws), "profile": "iccd_full_v1"})
+    )
+
+    bad_table = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "query_table", "table": "../patches"},
+        )
+    )
+    bad_column = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "patches",
+                "columns": ["patch_id", "../../secret"],
+            },
+        )
+    )
+    bad_bool_patch = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "query_table", "table": "patches", "patch_id": True},
+        )
+    )
+    bad_negative_patch = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "query_table", "table": "patches", "patch_id": -1},
+        )
+    )
+    bad_text_patch = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "query_table", "table": "patches", "patch_id": "abc"},
+        )
+    )
+    ok_text_patch = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "patches",
+                "patch_id": "0",
+                "columns": ["patch_id"],
+                "limit": 1,
+            },
+        )
+    )
+    legacy_vectors = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={"directory": str(ws), "kind": "vectors", "entity": "instances", "stage": "place"},
+        )
+    )
+
+    assert bad_table.response == ResponseEnum.error.value
+    assert "invalid foundation data table" in bad_table.message[0]
+    assert bad_column.response == ResponseEnum.error.value
+    assert "invalid foundation data column" in bad_column.message[0]
+    assert bad_bool_patch.response == ResponseEnum.error.value
+    assert "patch_id must be a non-negative integer" in bad_bool_patch.message[0]
+    assert bad_negative_patch.response == ResponseEnum.error.value
+    assert "patch_id must be a non-negative integer" in bad_negative_patch.message[0]
+    assert bad_text_patch.response == ResponseEnum.error.value
+    assert "patch_id must be a non-negative integer" in bad_text_patch.message[0]
+    assert ok_text_patch.response == ResponseEnum.success.value
+    assert ok_text_patch.data["content"]["records"] == [{"patch_id": 0}]
+    assert legacy_vectors.response == ResponseEnum.error.value
+    assert "legacy foundation data output is not available" in legacy_vectors.message[0]
 
 
 def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
@@ -475,7 +671,7 @@ def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):
     service.extract_foundation_data(
         ECCRequest(
             cmd="extract_foundation_data",
-            data={"directory": str(ws), "profile": "iccd_full_v1", "force": "false"},
+            data={"directory": str(ws), "profile": "iccd_full_v1", "force": "false", "export_legacy_debug": True},
         )
     )
 
@@ -560,7 +756,7 @@ def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_p
 
     assert response.response == ResponseEnum.success.value
     manifest = response.data["manifest"]
-    assert manifest["options"] == {"stages": ["place"], "include_raw_refs": False}
+    assert manifest["options"] == {"stages": ["place"], "include_raw_refs": False, "export_legacy_debug": False}
     assert "raw_refs" not in manifest["artifacts"]
     assert [item["name"] for item in response.data["summary"]["flow"]["steps"]] == ["place"]
     assert not (ws / "foundation_data" / "ecc" / "raw_refs" / "artifacts.json").exists()

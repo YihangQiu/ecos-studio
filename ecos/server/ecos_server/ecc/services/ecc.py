@@ -56,6 +56,25 @@ _FOUNDATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _FOUNDATION_SCHEMA_VERSION = "foundation-data-ecc-parquet-v1"
 _FOUNDATION_CONTRACT_NAME = "foundation_data/ecc"
 _FOUNDATION_STORAGE_FORMAT = "parquet+json_views"
+_ENTITY_KEY_FILTER_COLUMNS = {
+    "nets": "net_key",
+    "net_terminals": "net_key",
+    "pins": "pin_key",
+    "pin_stage_state": "pin_key",
+    "instances": "instance_key",
+    "instance_stage_state": "instance_key",
+    "wire_segments": "wire_segment_key",
+    "wire_patch_intersections": "wire_segment_key",
+    "routing_vertices": "net_key",
+    "routing_edges": "net_key",
+    "timing_paths": "path_id",
+    "timing_path_points": "path_id",
+    "timing_edges": "path_id",
+    "timing_wire_path_nodes": "path_id",
+    "semantic_blocks": "entity_key",
+    "patch_entity_refs": "entity_key",
+    "stage_deltas": "entity_key",
+}
 _TASKS: dict[str, dict] = {}
 _TASKS_LOCK = threading.Lock()
 _WORKSPACE_LOCKS: dict[str, threading.Lock] = {}
@@ -210,6 +229,43 @@ def _parse_bool(value: object, *, default: bool = False) -> bool:
             return False
     raise ValueError(f"invalid boolean value: {value}")
 
+
+
+def _validate_foundation_entity_key(value: str) -> None:
+    if not value or "/" in value or "\\" in value or value in {".", ".."}:
+        raise ValueError(f"invalid foundation data entity_key: {value}")
+
+
+def _validate_foundation_relative_path(value: str) -> None:
+    if not value or "\\" in value:
+        raise ValueError(f"invalid foundation data relative path: {value}")
+    candidate = Path(value)
+    if candidate.is_absolute() or any(part in {"", ".", ".."} for part in candidate.parts):
+        raise ValueError(f"invalid foundation data relative path: {value}")
+
+
+def _parse_foundation_filter_value(column: str, value: object) -> object:
+    if column == "patch_id":
+        return _parse_foundation_patch_id(value)
+    if isinstance(value, bool | int | float) or value is None:
+        return value
+    if isinstance(value, str):
+        normalized = value.strip()
+        if column in {"relative_path", "path"}:
+            _validate_foundation_relative_path(normalized)
+        elif column.endswith("_key") or column in {
+            "entity_key",
+            "net_key",
+            "pin_key",
+            "instance_key",
+            "wire_segment_key",
+            "path_id",
+        }:
+            _validate_foundation_entity_key(normalized)
+        elif not normalized or "\\" in normalized:
+            raise ValueError(f"invalid foundation data filter value for column: {column}")
+        return normalized
+    raise ValueError(f"unsupported query_table filter value for column: {column}")
 
 def _parse_foundation_patch_id(value: object) -> int:
     if isinstance(value, bool):
@@ -948,6 +1004,16 @@ class ECCService:
             columns = list(schema_tables[table_name].get("columns") or [])
 
         filter_values: dict[str, object] = {}
+        query_filter = data.get("filter") or {}
+        if query_filter:
+            if not isinstance(query_filter, dict):
+                raise ValueError("query_table filter must be an object")
+            for raw_column, raw_value in query_filter.items():
+                column = str(raw_column).strip()
+                _validate_foundation_token("column", column)
+                if column not in available_columns:
+                    raise ValueError(f"foundation table does not support filter column: {column}")
+                filter_values[column] = _parse_foundation_filter_value(column, raw_value)
         if data.get("stage"):
             stage = str(data["stage"]).strip()
             _validate_foundation_token("stage", stage)
@@ -956,8 +1022,9 @@ class ECCService:
             filter_values["patch_id"] = _parse_foundation_patch_id(data["patch_id"])
         if data.get("entity_key"):
             entity_key = str(data["entity_key"]).strip()
-            _validate_foundation_token("entity_key", entity_key)
-            filter_values["entity_key"] = entity_key
+            _validate_foundation_entity_key(entity_key)
+            entity_column = _ENTITY_KEY_FILTER_COLUMNS.get(table_name, "entity_key")
+            filter_values[entity_column] = entity_key
         for column in filter_values:
             if column not in available_columns:
                 raise ValueError(f"foundation table does not support filter column: {column}")

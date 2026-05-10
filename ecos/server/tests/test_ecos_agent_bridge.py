@@ -282,6 +282,17 @@ def test_extract_foundation_data_iccd_full_profile_and_indexed_kinds(tmp_path: P
                         ],
                     }
                 ],
+                "nets": [
+                    {
+                        "name": "n1",
+                        "wires": [
+                            {
+                                "layer": "MET2",
+                                "points": [[0, 0], [10, 0]],
+                            }
+                        ],
+                    }
+                ],
             }
         ),
         encoding="utf-8",
@@ -462,6 +473,18 @@ def test_get_foundation_data_exposes_parquet_schema_table_index_and_query(tmp_pa
     assert schema.response == ResponseEnum.success.value
     assert schema.data["content"]["storage_format"] == "parquet+json_views"
     assert "run_stage_patch_features" in schema.data["content"]["tables"]
+    feature_columns = schema.data["content"]["tables"]["run_stage_patch_features"]["columns"]
+    for column in (
+        "instance_count_center",
+        "macro_count",
+        "cross_patch_net_count",
+        "net_count_overlap",
+        "rudy_horizontal",
+        "margin_horizontal",
+        "critical_path_count",
+        "drc_count",
+    ):
+        assert column in feature_columns
 
     table_index = service.get_foundation_data(
         ECCRequest(cmd="get_foundation_data", data={"directory": str(ws), "kind": "table_index"})
@@ -496,6 +519,22 @@ def test_get_foundation_data_exposes_parquet_schema_table_index_and_query(tmp_pa
         {"stage_name": "place", "patch_id": 0, "cell_density": 1.0}
     ]
     assert query.data["content"]["truncated"] is False
+
+    filtered = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "run_stage_patch_features",
+                "filter": {"stage_name": "place", "patch_id": 0},
+                "columns": ["stage_name", "patch_id"],
+            },
+        )
+    )
+    assert filtered.response == ResponseEnum.success.value
+    assert filtered.data["content"]["filters"] == {"stage_name": "place", "patch_id": 0}
+    assert filtered.data["content"]["records"] == [{"stage_name": "place", "patch_id": 0}]
 
 
 def test_query_table_rejects_invalid_table_column_and_missing_legacy_vectors(tmp_path: Path):
@@ -563,6 +602,17 @@ def test_query_table_rejects_invalid_table_column_and_missing_legacy_vectors(tmp
             data={"directory": str(ws), "kind": "query_table", "table": "patches", "patch_id": "abc"},
         )
     )
+    bad_filter_column = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "patches",
+                "filter": {"../../secret": 0},
+            },
+        )
+    )
     ok_text_patch = service.get_foundation_data(
         ECCRequest(
             cmd="get_foundation_data",
@@ -593,11 +643,185 @@ def test_query_table_rejects_invalid_table_column_and_missing_legacy_vectors(tmp
     assert "patch_id must be a non-negative integer" in bad_negative_patch.message[0]
     assert bad_text_patch.response == ResponseEnum.error.value
     assert "patch_id must be a non-negative integer" in bad_text_patch.message[0]
+    assert bad_filter_column.response == ResponseEnum.error.value
+    assert "invalid foundation data column" in bad_filter_column.message[0]
     assert ok_text_patch.response == ResponseEnum.success.value
     assert ok_text_patch.data["content"]["records"] == [{"patch_id": 0}]
     assert legacy_vectors.response == ResponseEnum.error.value
     assert "legacy foundation data output is not available" in legacy_vectors.message[0]
 
+
+
+def test_foundation_parquet_contract_has_joinable_provenance_and_artifacts(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    stage = ws / "place_dreamplace"
+    (stage / "output").mkdir(parents=True)
+    (stage / "feature" / "gcell_patch_map" / "density_map").mkdir(parents=True)
+    early_router = stage / "data" / "rt" / "rt_temp_directory" / "early_router"
+    early_router.mkdir(parents=True)
+    (stage / "output" / "gcd_place.json").write_text(
+        json.dumps(
+            {
+                "design name": "gcd",
+                "diearea": {"path": [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]]},
+                "data": [
+                    {
+                        "type": "group",
+                        "struct name": "Instance_U1",
+                        "children": [
+                            {
+                                "type": "box",
+                                "layer": 0,
+                                "path": [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (stage / "output" / "gcd_place.def").write_text(
+        "\n".join(
+            [
+                "VERSION 5.8 ;",
+                "DESIGN gcd ;",
+                "UNITS DISTANCE MICRONS 1000 ;",
+                "DIEAREA ( 0 0 ) ( 20 20 ) ;",
+                "COMPONENTS 1 ;",
+                "- U1 BUF + PLACED ( 0 0 ) N ;",
+                "END COMPONENTS",
+                "PINS 1 ;",
+                "- IN + NET n1 + DIRECTION INPUT + USE SIGNAL + PLACED ( 0 0 ) N ;",
+                "END PINS",
+                "NETS 1 ;",
+                "- n1 ( PIN IN ) ( U1 A ) + ROUTED MET2 ( 0 0 ) ( 10 0 ) ;",
+                "END NETS",
+                "END DESIGN",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (
+        stage / "feature" / "gcell_patch_map" / "density_map" / "place_allcell_density.csv"
+    ).write_text("1,2\n3,4\n", encoding="utf-8")
+    (early_router / "gcell.info").write_text(
+        "0,0,0,0,10,10\n0,1,0,10,10,20\n1,0,10,0,20,10\n1,1,10,10,20,20\n",
+        encoding="utf-8",
+    )
+    (early_router / "route.guide").write_text(
+        "\n".join(
+            [
+                "guide net_name",
+                "pin grid_x grid_y real_x real_y layer energy name",
+                "wire grid1_x grid1_y grid2_x grid2_y real1_x real1_y real2_x real2_y layer",
+                "via grid_x grid_y real_x real_y layer1 layer2",
+                "guide n1",
+                "wire 0 0 1 0 0 0 10 0 MET2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (early_router / "net_map_MET2.csv").write_text("8,0\n1,2\n", encoding="utf-8")
+    (early_router / "supply_map_MET2.csv").write_text("5,1\n3,4\n", encoding="utf-8")
+
+    service = ECCService()
+    extract = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={"directory": str(ws), "profile": "iccd_full_v1", "include_raw_refs": True},
+        )
+    )
+    assert extract.response == ResponseEnum.success.value
+
+    import pyarrow.parquet as pq
+
+    foundation_dir = Path(extract.data["foundation_dir"])
+    schema = json.loads((foundation_dir / "schema.json").read_text(encoding="utf-8"))
+    assert schema["tables"]["run_patch_route_label_layers"]["primary_key"] == [
+        "design_id",
+        "run_id",
+        "patch_id",
+        "layer_name",
+        "direction",
+    ]
+
+    def table_rows(name: str, columns: list[str] | None = None) -> list[dict]:
+        return pq.read_table(foundation_dir / schema["tables"][name]["path"], columns=columns).to_pylist()
+
+    layer_pk = schema["tables"]["run_patch_route_label_layers"]["primary_key"]
+    layer_rows = table_rows("run_patch_route_label_layers", layer_pk)
+    assert len(layer_rows) == len({tuple(row[column] for column in layer_pk) for row in layer_rows})
+
+    provenance_ids = {row["provenance_id"] for row in table_rows("provenance", ["provenance_id"])}
+    for table_name in ("run_stage_patch_maps", "run_stage_patch_features", "stage_deltas"):
+        refs = {
+            row["provenance_id"]
+            for row in table_rows(table_name, ["provenance_id"])
+            if row["provenance_id"]
+        }
+        assert refs <= provenance_ids
+
+    artifact_ids = {row["artifact_id"] for row in table_rows("artifacts", ["artifact_id"])}
+    for table_name, column in (
+        ("run_patch_route_labels", "label_source_artifact_id"),
+        ("run_patch_route_label_layers", "source_artifact_id"),
+        ("stage_metrics", "source_artifact_id"),
+    ):
+        refs = {row[column] for row in table_rows(table_name, [column]) if row[column]}
+        assert refs <= artifact_ids
+
+    semantic_rows = table_rows(
+        "semantic_blocks",
+        [
+            "block_payload",
+            "source_doc",
+            "source_field_path",
+            "preserved_reason",
+            "future_normalization_plan",
+        ],
+    )
+    assert semantic_rows
+    assert all(row["source_doc"] for row in semantic_rows)
+    assert all(row["source_field_path"] for row in semantic_rows)
+    assert all(row["preserved_reason"] for row in semantic_rows)
+    assert all(row["future_normalization_plan"] for row in semantic_rows)
+    assert not any("vectors/" in row["block_payload"] or "maps/" in row["block_payload"] for row in semantic_rows)
+
+    query_net = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "nets",
+                "entity_key": "n1",
+                "columns": ["net_key"],
+            },
+        )
+    )
+    assert query_net.response == ResponseEnum.success.value
+    assert query_net.data["content"]["filters"] == {"net_key": "n1"}
+    assert query_net.data["content"]["records"] == [{"net_key": "n1"}]
+
+    query_artifact = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "artifacts",
+                "filter": {"relative_path": "place_dreamplace/output/gcd_place.def"},
+                "columns": ["relative_path", "artifact_type"],
+            },
+        )
+    )
+    assert query_artifact.response == ResponseEnum.success.value, query_artifact.message
+    assert query_artifact.data["content"]["filters"] == {"relative_path": "place_dreamplace/output/gcd_place.def"}
+    assert query_artifact.data["content"]["records"] == [
+        {"relative_path": "place_dreamplace/output/gcd_place.def", "artifact_type": "def"}
+    ]
 
 def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
     ws = _workspace(tmp_path)

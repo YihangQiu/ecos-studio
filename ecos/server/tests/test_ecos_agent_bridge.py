@@ -739,6 +739,13 @@ def test_foundation_parquet_contract_has_joinable_provenance_and_artifacts(tmp_p
 
     foundation_dir = Path(extract.data["foundation_dir"])
     schema = json.loads((foundation_dir / "schema.json").read_text(encoding="utf-8"))
+    route_label_columns = schema["tables"]["run_patch_route_labels"]["columns"]
+    assert "horizontal_demand_capacity" in route_label_columns
+    assert "vertical_demand_capacity" in route_label_columns
+    assert "union_demand_capacity" in route_label_columns
+    assert "horizontal_overflow" not in route_label_columns
+    assert "vertical_overflow" not in route_label_columns
+    assert "union_overflow" not in route_label_columns
     assert schema["tables"]["run_patch_route_label_layers"]["primary_key"] == [
         "design_id",
         "run_id",
@@ -746,6 +753,9 @@ def test_foundation_parquet_contract_has_joinable_provenance_and_artifacts(tmp_p
         "layer_name",
         "direction",
     ]
+    layer_label_columns = schema["tables"]["run_patch_route_label_layers"]["columns"]
+    assert "demand_capacity" in layer_label_columns
+    assert "overflow" not in layer_label_columns
 
     def table_rows(name: str, columns: list[str] | None = None) -> list[dict]:
         return pq.read_table(foundation_dir / schema["tables"][name]["path"], columns=columns).to_pylist()

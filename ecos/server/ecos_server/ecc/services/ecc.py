@@ -99,6 +99,22 @@ _ALLOWED_PARAMETER_PATHS = {
 _PARAMETER_ALIASES = {
     "Core.Utilization": "Core.Utilitization",
 }
+_DREAMPLACE_PARAMETER_MAP = {
+    "Target density": "target_density",
+    "Target overflow": "stop_overflow",
+    "Cell padding x": "cell_padding_x",
+    "Routability opt flag": "routability_opt_flag",
+}
+_DEFAULT_PDK_ROOT_CANDIDATES = (
+    Path("/nfs/share/home/yhqiu/icsprout55-pdk"),
+    Path("/workspaces/iagent-survey/icsprout55-pdk"),
+    Path("/home/yhqiu1/iagent-survey/icsprout55-pdk"),
+)
+_ICS55_PDK_REQUIRED_FILES = (
+    Path("prtech/techLEF/N551P6M_ecos.lef"),
+    Path("IP/STD_cell/ics55_LLSC_H7C_V1p10C100/ics55_LLSC_H7CR/lef/ics55_LLSC_H7CR_ecos.lef"),
+    Path("IP/STD_cell/ics55_LLSC_H7C_V1p10C100/ics55_LLSC_H7CL/lef/ics55_LLSC_H7CL_ecos.lef"),
+)
 _ALLOWED_STEP_CONFIG_PATHS = {
     "place": {
         "PL.is_timing_effort",
@@ -618,6 +634,45 @@ class ECCService:
                 rewritten.append(str(path.relative_to(target_dir)))
         return rewritten
 
+    @classmethod
+    def _candidate_pdk_roots(cls, explicit_root: str | None = None) -> list[Path]:
+        if explicit_root:
+            return [Path(str(explicit_root)).expanduser()]
+        candidates: list[Path] = []
+        for raw in (os.environ.get("CHIPCOMPILER_ICS55_PDK_ROOT"),):
+            if raw:
+                candidates.append(Path(str(raw)).expanduser())
+        candidates.extend(_DEFAULT_PDK_ROOT_CANDIDATES)
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key not in seen:
+                seen.add(key)
+                unique.append(candidate)
+        return unique
+
+    @classmethod
+    def _refresh_workspace_pdk_root(
+        cls, workspace_dir: Path, explicit_root: str | None = None
+    ) -> str | None:
+        for candidate in cls._candidate_pdk_roots(explicit_root):
+            if not cls._looks_like_ics55_pdk_root(candidate):
+                continue
+            resolved = str(candidate.resolve())
+            params_path = workspace_dir / "home" / "parameters.json"
+            params = cls._read_json(params_path)
+            if params.get("PDK Root") != resolved:
+                params["PDK Root"] = resolved
+                cls._write_json(params_path, params)
+            os.environ["CHIPCOMPILER_ICS55_PDK_ROOT"] = resolved
+            return resolved
+        return None
+
+    @staticmethod
+    def _looks_like_ics55_pdk_root(candidate: Path) -> bool:
+        return candidate.is_dir() and all((candidate / path).is_file() for path in _ICS55_PDK_REQUIRED_FILES)
+
     @staticmethod
     def _flow_steps(workspace_dir: Path) -> list[dict]:
         flow = ECCService._read_json(workspace_dir / "home" / "flow.json")
@@ -769,6 +824,26 @@ class ECCService:
                 rt.setdefault("RT", {})["-temp_directory_path"] = str(current_dir / "data" / "rt")
                 self._write_json(rt_config, rt)
                 changed.add(str(rt_config.relative_to(workspace_dir)))
+
+            dreamplace_config = config_dir / "dreamplace.json"
+            dreamplace = self._read_json(dreamplace_config)
+            if tool == "dreamplace" and dreamplace:
+                dreamplace.update(
+                    {
+                        "def_input": input_def,
+                        "verilog_input": input_verilog,
+                        "result_dir": str(current_dir / "output"),
+                        "base_design_name": design,
+                    }
+                )
+                for parameter_key, dreamplace_key in _DREAMPLACE_PARAMETER_MAP.items():
+                    if parameter_key in parameters:
+                        dreamplace[dreamplace_key] = parameters[parameter_key]
+                direct_overrides = parameters.get("DreamPlace", {})
+                if isinstance(direct_overrides, dict):
+                    dreamplace.update(direct_overrides)
+                self._write_json(dreamplace_config, dreamplace)
+                changed.add(str(dreamplace_config.relative_to(workspace_dir)))
 
         return sorted(changed)
 
@@ -1113,9 +1188,12 @@ class ECCService:
             shutil.copytree(
                 source_dir,
                 target_dir,
-                ignore=shutil.ignore_patterns("foundation_data/ecc"),
+                ignore=shutil.ignore_patterns("foundation_data"),
             )
             rewritten = self._relocate_workspace_paths(target_dir, source_dir)
+            pdk_root = self._refresh_workspace_pdk_root(
+                target_dir, str(data.get("pdk_root") or "").strip() or None
+            )
         except Exception as e:
             return ECCResponse(
                 cmd=request.cmd, response=ResponseEnum.error.value, data={}, message=[str(e)]
@@ -1128,6 +1206,7 @@ class ECCService:
                 "target": str(target_dir),
                 "workspace_id": str(target_dir),
                 "rewritten_paths": rewritten,
+                "pdk_root": pdk_root,
             },
             message=[f"workspace cloned: {target_dir}"],
         )
@@ -1160,9 +1239,14 @@ class ECCService:
             if start_step not in steps:
                 update(status="failed", error=f"unknown step: {start_step}")
                 return
+            pdk_root = service._refresh_workspace_pdk_root(workspace_dir)
             removed_artifacts = service._cleanup_stale_step_artifacts(workspace_dir, start_step)
             rebuilt_configs = service._prepare_rerun_step_configs(workspace_dir, start_step)
-            update(cleaned_artifacts=removed_artifacts, rebuilt_configs=rebuilt_configs)
+            update(
+                cleaned_artifacts=removed_artifacts,
+                rebuilt_configs=rebuilt_configs,
+                pdk_root=pdk_root or "",
+            )
             for step in steps[steps.index(start_step) :]:
                 update(current_step=step)
                 gui_notify.notify_to(

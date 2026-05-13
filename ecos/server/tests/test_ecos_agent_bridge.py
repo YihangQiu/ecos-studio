@@ -1008,3 +1008,116 @@ def test_extract_foundation_data_rejects_unknown_stage_filter(tmp_path: Path):
 
     assert response.response == ResponseEnum.error.value
     assert "unknown foundation extraction stage" in response.message[0]
+
+
+def test_prepare_rerun_refreshes_dreamplace_config_parameters_and_paths(tmp_path: Path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    place_dir = target / "place_dreamplace"
+    (source / "home").mkdir(parents=True)
+    (target / "home").mkdir(parents=True)
+    (target / "origin").mkdir(parents=True)
+    (place_dir / "config").mkdir(parents=True)
+    (place_dir / "output").mkdir(parents=True)
+    (target / "home" / "flow.json").write_text(
+        json.dumps({"steps": [{"name": "place", "tool": "dreamplace", "state": "Success"}]}),
+        encoding="utf-8",
+    )
+    (target / "home" / "parameters.json").write_text(
+        json.dumps(
+            {
+                "Design": "ysyx_24070003",
+                "Target density": 0.63,
+                "Target overflow": 0.08,
+                "Cell padding x": 700,
+                "Routability opt flag": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (target / "origin" / "ysyx_24070003.def").write_text("VERSION 5.8 ;", encoding="utf-8")
+    (target / "origin" / "ysyx_24070003.v").write_text("module top; endmodule", encoding="utf-8")
+    (place_dir / "config" / "dreamplace.json").write_text(
+        json.dumps(
+            {
+                "def_input": str(source / "old.def"),
+                "verilog_input": str(source / "old.v"),
+                "result_dir": str(source / "place_dreamplace" / "output"),
+                "base_design_name": "old",
+                "target_density": 0.8,
+                "stop_overflow": 0.1,
+                "cell_padding_x": 600,
+                "routability_opt_flag": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    rebuilt = service._prepare_rerun_step_configs(target, "place")
+
+    assert "place_dreamplace/config/dreamplace.json" in rebuilt
+    dreamplace = json.loads((place_dir / "config" / "dreamplace.json").read_text(encoding="utf-8"))
+    assert str(source) not in json.dumps(dreamplace)
+    assert dreamplace["def_input"] == str(target / "origin" / "ysyx_24070003.def")
+    assert dreamplace["verilog_input"] == str(target / "origin" / "ysyx_24070003.v")
+    assert dreamplace["result_dir"] == str(place_dir / "output")
+    assert dreamplace["base_design_name"] == "ysyx_24070003"
+    assert dreamplace["target_density"] == 0.63
+    assert dreamplace["stop_overflow"] == 0.08
+    assert dreamplace["cell_padding_x"] == 700
+    assert dreamplace["routability_opt_flag"] == 1
+
+
+def test_refresh_workspace_pdk_root_uses_explicit_available_path(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    pdk_root = tmp_path / "icsprout55-pdk"
+    for rel_path in (
+        "prtech/techLEF/N551P6M_ecos.lef",
+        "IP/STD_cell/ics55_LLSC_H7C_V1p10C100/ics55_LLSC_H7CR/lef/ics55_LLSC_H7CR_ecos.lef",
+        "IP/STD_cell/ics55_LLSC_H7C_V1p10C100/ics55_LLSC_H7CL/lef/ics55_LLSC_H7CL_ecos.lef",
+    ):
+        path = pdk_root / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("VERSION 5.8 ;\n", encoding="utf-8")
+
+    service = ECCService()
+    refreshed = service._refresh_workspace_pdk_root(ws, str(pdk_root))
+
+    assert refreshed == str(pdk_root.resolve())
+    params = json.loads((ws / "home" / "parameters.json").read_text(encoding="utf-8"))
+    assert params["PDK Root"] == str(pdk_root.resolve())
+
+
+def test_refresh_workspace_pdk_root_rejects_plain_directory(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    pdk_root = tmp_path / "not-a-pdk"
+    pdk_root.mkdir()
+
+    service = ECCService()
+    refreshed = service._refresh_workspace_pdk_root(ws, str(pdk_root))
+
+    assert refreshed is None
+    params = json.loads((ws / "home" / "parameters.json").read_text(encoding="utf-8"))
+    assert "PDK Root" not in params
+
+
+def test_clone_workspace_skips_stale_foundation_data(tmp_path: Path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    (source / "home").mkdir(parents=True)
+    (source / "foundation_data" / "ecc").mkdir(parents=True)
+    (source / "foundation_data" / "ecc" / "manifest.json").write_text(
+        json.dumps({"stale": True}), encoding="utf-8"
+    )
+
+    service = ECCService()
+    response = service.clone_workspace(
+        ECCRequest(
+            cmd="clone_workspace",
+            data={"directory": str(source), "target_directory": str(target)},
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    assert not (target / "foundation_data").exists()

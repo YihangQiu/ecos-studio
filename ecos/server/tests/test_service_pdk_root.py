@@ -6,6 +6,24 @@ from ecos_server.ecc.schemas import ECCRequest
 from ecos_server.ecc.services import ECCService
 
 
+def _create_minimal_ics55_pdk(root):
+    tech_path = root / "prtech" / "techLEF" / "N551P6M_ecos.lef"
+    tech_path.parent.mkdir(parents=True, exist_ok=True)
+    tech_path.write_text("VERSION 5.8 ;\n", encoding="utf-8")
+
+    stdcell_root = root / "IP" / "STD_cell" / "ics55_LLSC_H7C_V1p10C100"
+    for flavor in ("ics55_LLSC_H7CR", "ics55_LLSC_H7CL"):
+        lef_path = stdcell_root / flavor / "lef" / f"{flavor}_ecos.lef"
+        lef_path.parent.mkdir(parents=True, exist_ok=True)
+        lef_path.write_text("VERSION 5.8 ;\n", encoding="utf-8")
+
+        lib_path = stdcell_root / flavor / "liberty" / f"{flavor}_ss_rcworst_1p08_125_nldm.lib"
+        lib_path.parent.mkdir(parents=True, exist_ok=True)
+        lib_path.write_text("library(test) { }\n", encoding="utf-8")
+
+    return root
+
+
 def _default_parameters() -> dict:
     return {
         "PDK": "ics55",
@@ -17,8 +35,7 @@ def _default_parameters() -> dict:
 
 
 def test_set_pdk_root_success(tmp_path, monkeypatch):
-    root_dir = tmp_path / "ics55"
-    root_dir.mkdir(parents=True, exist_ok=True)
+    root_dir = _create_minimal_ics55_pdk(tmp_path / "ics55")
     monkeypatch.delenv("CHIPCOMPILER_ICS55_PDK_ROOT", raising=False)
 
     service = ECCService()
@@ -56,8 +73,7 @@ def test_set_pdk_root_invalid_directory_returns_failed(tmp_path):
 
 
 def test_create_workspace_uses_env_set_by_set_pdk_root(tmp_path, monkeypatch):
-    root_dir = tmp_path / "ics55"
-    root_dir.mkdir(parents=True, exist_ok=True)
+    root_dir = _create_minimal_ics55_pdk(tmp_path / "ics55")
     monkeypatch.delenv("CHIPCOMPILER_ICS55_PDK_ROOT", raising=False)
 
     workspace_dir = tmp_path / "workspace"
@@ -90,5 +106,5 @@ def test_create_workspace_uses_env_set_by_set_pdk_root(tmp_path, monkeypatch):
     create_resp = service.create_workspace(create_req)
     assert create_resp.response == "success"
 
-    parameters = json.loads((workspace_dir / "parameters.json").read_text())
+    parameters = json.loads((workspace_dir / "home" / "parameters.json").read_text(encoding="utf-8"))
     assert parameters.get("PDK Root") == str(root_dir.resolve())

@@ -899,6 +899,132 @@ def test_get_foundation_data_rejects_path_traversal(tmp_path: Path):
     assert "invalid foundation data stage" in bad_stage_token.message[0]
 
 
+def test_query_table_merges_base_delta_layout_sources(tmp_path: Path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    ws = _workspace(tmp_path)
+    base_root = tmp_path / "design_base" / "bench" / "design" / "foundation_data" / "ecc"
+    variant_root = ws / "foundation_data" / "ecc"
+    (base_root / "tables").mkdir(parents=True)
+    (variant_root / "tables").mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist([{"patch_id": 1, "x": 10.0, "y": 20.0}]), base_root / "tables" / "patches.parquet")
+    pq.write_table(
+        pa.Table.from_pylist([{"patch_id": 1, "stage_name": "route", "label": 0.25}]),
+        variant_root / "tables" / "run_patch_route_labels.parquet",
+    )
+    schema = {
+        "schema_version": "foundation-data-ecc-parquet-v1",
+        "contract_name": "foundation_data/ecc",
+        "storage_format": "parquet+json_views",
+        "tables": {
+            "patches": {"columns": ["patch_id", "x", "y"]},
+            "run_patch_route_labels": {"columns": ["patch_id", "stage_name", "label"]},
+        },
+    }
+    (variant_root / "schema.json").write_text(json.dumps(schema), encoding="utf-8")
+    (variant_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "foundation-data-ecc-parquet-v1",
+                "contract_name": "foundation_data/ecc",
+                "storage_format": "parquet+json_views",
+                "storage_layout": "base_delta_v1",
+                "base_manifest_path": str(base_root / "manifest.json"),
+                "tables": {
+                    "patches": {
+                        "path": "tables/patches.parquet",
+                        "sources": [{"root": "design_base", "path": "tables/patches.parquet"}],
+                    },
+                    "run_patch_route_labels": {
+                        "path": "tables/run_patch_route_labels.parquet",
+                        "sources": [{"root": "variant_delta", "path": "tables/run_patch_route_labels.parquet"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (base_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "foundation-data-ecc-parquet-v1",
+                "contract_name": "foundation_data/ecc",
+                "storage_format": "parquet+json_views",
+                "tables": {"patches": {"path": "tables/patches.parquet"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    response = service.get_foundation_data(
+        ECCRequest(
+            cmd="get_foundation_data",
+            data={
+                "directory": str(ws),
+                "kind": "query_table",
+                "table": "patches",
+                "columns": ["patch_id", "x"],
+                "patch_id": 1,
+            },
+        )
+    )
+
+    assert response.response in {ResponseEnum.success.value, ResponseEnum.warning.value}, response.message
+    assert response.data["content"]["records"] == [{"patch_id": 1, "x": 10.0}]
+
+
+def test_extract_foundation_data_forwards_base_delta_scope_options(tmp_path: Path, monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _FakeExtractor:
+        def __init__(self, workspace_dir: Path, *, profile: str) -> None:
+            self.workspace_dir = Path(workspace_dir)
+            self.profile = profile
+
+        def extract(self, **kwargs):
+            from types import SimpleNamespace
+
+            captured.update(kwargs)
+            foundation_dir = self.workspace_dir / "foundation_data" / "ecc"
+            manifest = {
+                "schema_version": "foundation-data-ecc-parquet-v1",
+                "contract_name": "foundation_data/ecc",
+                "storage_format": "parquet+json_views",
+                "storage_layout": "base_delta_v1",
+                "base_manifest_path": kwargs["base_manifest_path"],
+                "tables": {},
+            }
+            return SimpleNamespace(
+                foundation_dir=foundation_dir,
+                manifest=manifest,
+                summary={"ok": True},
+            )
+
+    monkeypatch.setattr("ecos_server.ecc.services.ecc._foundation_extractor_class", lambda: _FakeExtractor)
+    ws = _workspace(tmp_path)
+    base_manifest = tmp_path / "design_base" / "manifest.json"
+    service = ECCService()
+
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={
+                "directory": str(ws),
+                "profile": "iccd_full_v1",
+                "scope": "variant_delta",
+                "base_manifest_path": str(base_manifest),
+            },
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    assert captured["scope"] == "variant_delta"
+    assert captured["base_manifest_path"] == str(base_manifest)
+    assert response.data["manifest"]["storage_layout"] == "base_delta_v1"
+
+
 def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):
     ws = _workspace(tmp_path)
     service = ECCService()

@@ -930,6 +930,8 @@ class ECCService:
                     export_legacy_debug=_parse_bool(
                         request.data.get("export_legacy_debug", False), default=False
                     ),
+                    scope=str(request.data.get("scope", "full")).strip() or "full",
+                    base_manifest_path=request.data.get("base_manifest_path"),
                 )
                 manifest = result.manifest
                 data = {
@@ -1044,6 +1046,7 @@ class ECCService:
     def _query_foundation_table(self, foundation_dir: Path, data: dict) -> dict:
         try:
             import pyarrow.parquet as pq
+            import pyarrow as pa
         except ImportError as exc:  # pragma: no cover - dependency setup failure
             raise RuntimeError("pyarrow is required for kind=query_table") from exc
 
@@ -1105,22 +1108,14 @@ class ECCService:
                 raise ValueError(f"foundation table does not support filter column: {column}")
 
         read_columns = sorted(set(columns) | set(filter_values))
-        table_rel = str(tables[table_name].get("path", ""))
-        if Path(table_rel).is_absolute() or Path(table_rel).suffix != ".parquet":
-            raise ValueError(f"invalid foundation table path: {table_name}")
-        table_path = foundation_dir / table_rel
-        foundation_root = foundation_dir.resolve()
-        target_resolved = table_path.resolve(strict=False)
-        if not target_resolved.is_relative_to(foundation_root):
-            raise ValueError("foundation table path escapes foundation directory")
-        if not table_path.exists():
-            raise ValueError(f"foundation table missing: {table_name}")
+        table_paths = self._foundation_table_source_paths(foundation_dir, manifest, table_name)
 
         limit = int(data.get("limit") or 100)
         if limit < 1:
             raise ValueError("query_table limit must be positive")
         limit = min(limit, 1000)
-        rows = pq.read_table(table_path, columns=read_columns).to_pylist()
+        batches = [pq.read_table(table_path, columns=read_columns) for table_path in table_paths]
+        rows = pa.concat_tables(batches, promote_options="default").to_pylist() if len(batches) > 1 else batches[0].to_pylist()
         filtered = [
             row for row in rows
             if all(row.get(column) == value for column, value in filter_values.items())
@@ -1136,6 +1131,65 @@ class ECCService:
             "truncated": len(filtered) > limit,
             "records": projected,
         }
+
+    def _foundation_table_source_paths(
+        self, foundation_dir: Path, manifest: dict, table_name: str
+    ) -> list[Path]:
+        tables = manifest.get("tables") or {}
+        table_meta = tables.get(table_name) or {}
+        sources = table_meta.get("sources")
+        if manifest.get("storage_layout") != "base_delta_v1" or not sources:
+            table_rel = str(table_meta.get("path", ""))
+            return [
+                self._checked_foundation_table_path(
+                    foundation_dir,
+                    table_rel,
+                    allowed_roots=[foundation_dir],
+                    table_name=table_name,
+                )
+            ]
+        if not isinstance(sources, list):
+            raise ValueError(f"invalid foundation table sources: {table_name}")
+        base_manifest_path = Path(str(manifest.get("base_manifest_path") or ""))
+        if not base_manifest_path.is_absolute() or base_manifest_path.name != "manifest.json":
+            raise ValueError("invalid foundation base manifest path")
+        base_root = base_manifest_path.parent
+        variant_root = foundation_dir
+        allowed_roots = [variant_root.resolve(), base_root.resolve()]
+        paths: list[Path] = []
+        for source in sources:
+            if not isinstance(source, dict):
+                raise ValueError(f"invalid foundation table source: {table_name}")
+            source_root = str(source.get("root") or "").strip()
+            source_rel = str(source.get("path") or "").strip()
+            root = base_root if source_root == "design_base" else variant_root if source_root == "variant_delta" else None
+            if root is None:
+                raise ValueError(f"invalid foundation table source root: {source_root}")
+            paths.append(
+                self._checked_foundation_table_path(
+                    root,
+                    source_rel,
+                    allowed_roots=allowed_roots,
+                    table_name=table_name,
+                )
+            )
+        if not paths:
+            raise ValueError(f"foundation table missing: {table_name}")
+        return paths
+
+    @staticmethod
+    def _checked_foundation_table_path(
+        root: Path, table_rel: str, *, allowed_roots: list[Path], table_name: str
+    ) -> Path:
+        if Path(table_rel).is_absolute() or Path(table_rel).suffix != ".parquet":
+            raise ValueError(f"invalid foundation table path: {table_name}")
+        table_path = root / table_rel
+        target_resolved = table_path.resolve(strict=False)
+        if not any(target_resolved.is_relative_to(allowed_root) for allowed_root in allowed_roots):
+            raise ValueError("foundation table path escapes foundation directory")
+        if not table_path.exists():
+            raise ValueError(f"foundation table missing: {table_name}")
+        return table_path
 
     @staticmethod
     def _foundation_kind_path(

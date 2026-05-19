@@ -2,13 +2,16 @@
 import contextlib
 import json
 import logging
+import multiprocessing
 import os
+import queue
 import re
 import shutil
 import sys
 import threading
 import time
 import uuid
+import traceback
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -213,6 +216,56 @@ def _foundation_extractor_class():
         raise
 
 
+def _extract_iccd_full_profile_worker(
+    workspace_dir: str,
+    profile: str,
+    options: dict,
+    result_queue,
+) -> None:
+    try:
+        extractor_cls = _foundation_extractor_class()
+        extractor_cls(Path(workspace_dir), profile=profile).extract(**options)
+        result_queue.put({"status": "success"})
+    except BaseException as exc:  # noqa: BLE001 - returned across process boundary
+        result_queue.put(
+            {
+                "status": "error",
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+
+
+def _run_iccd_full_profile_with_timeout(
+    workspace_dir: Path,
+    profile: str,
+    options: dict,
+    timeout_seconds: float,
+) -> None:
+    result_queue = multiprocessing.Queue(maxsize=1)
+    process = multiprocessing.Process(
+        target=_extract_iccd_full_profile_worker,
+        args=(str(workspace_dir), profile, options, result_queue),
+    )
+    process.start()
+    process.join(timeout=timeout_seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=10.0)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=5.0)
+        raise TimeoutError(f"extract_foundation_data timed out after {timeout_seconds:.1f}s")
+    try:
+        payload = result_queue.get_nowait()
+    except queue.Empty as exc:
+        if process.exitcode == 0:
+            return
+        raise RuntimeError(f"extract_foundation_data worker exited with code {process.exitcode}") from exc
+    if payload.get("status") == "error":
+        raise RuntimeError(str(payload.get("error") or "extract_foundation_data worker failed"))
+
+
 def _jsonl_record_count(path: Path) -> int:
     if not path.exists() or not path.is_file():
         return 0
@@ -244,6 +297,18 @@ def _parse_bool(value: object, *, default: bool = False) -> bool:
         if normalized in {"0", "false", "f", "no", "n", "off", ""}:
             return False
     raise ValueError(f"invalid boolean value: {value}")
+
+
+def _parse_positive_float(value: object, name: str) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be positive") from exc
+    if parsed <= 0:
+        raise ValueError(f"{name} must be positive")
+    return parsed
 
 
 
@@ -920,29 +985,50 @@ class ECCService:
             foundation_dir = workspace_dir / _FOUNDATION_DIR
             profile = str(request.data.get("profile", "summary_v1")).strip() or "summary_v1"
             if profile == "iccd_full_v1":
-                extractor_cls = _foundation_extractor_class()
-                result = extractor_cls(workspace_dir, profile=profile).extract(
-                    force=_parse_bool(request.data.get("force", False)),
-                    stages=request.data.get("stages", "all"),
-                    include_raw_refs=_parse_bool(
+                extraction_options = {
+                    "force": _parse_bool(request.data.get("force", False)),
+                    "stages": request.data.get("stages", "all"),
+                    "include_raw_refs": _parse_bool(
                         request.data.get("include_raw_refs", True), default=True
                     ),
-                    export_legacy_debug=_parse_bool(
+                    "export_legacy_debug": _parse_bool(
                         request.data.get("export_legacy_debug", False), default=False
                     ),
-                    scope=str(request.data.get("scope", "full")).strip() or "full",
-                    base_manifest_path=request.data.get("base_manifest_path"),
+                    "scope": str(request.data.get("scope", "full")).strip() or "full",
+                    "base_manifest_path": request.data.get("base_manifest_path"),
+                }
+                timeout_seconds = _parse_positive_float(
+                    request.data.get("timeout_seconds"), "timeout_seconds"
                 )
-                manifest = result.manifest
+                start = time.monotonic()
+                if timeout_seconds is None:
+                    extractor_cls = _foundation_extractor_class()
+                    result = extractor_cls(workspace_dir, profile=profile).extract(**extraction_options)
+                    manifest = result.manifest
+                    summary = result.summary
+                    foundation_dir = result.foundation_dir
+                else:
+                    _run_iccd_full_profile_with_timeout(
+                        workspace_dir,
+                        profile,
+                        extraction_options,
+                        timeout_seconds,
+                    )
+                    manifest = self._read_json(self._manifest_path(workspace_dir))
+                    summary = self._read_json(foundation_dir / "summary.json")
+                elapsed = time.monotonic() - start
                 data = {
                     "directory": str(workspace_dir),
-                    "foundation_dir": str(result.foundation_dir),
+                    "foundation_dir": str(foundation_dir),
                     "manifest_path": str(self._manifest_path(workspace_dir)),
                     "profile": profile,
                     "stale": False,
                     "manifest": manifest,
-                    "summary": result.summary,
+                    "summary": summary,
+                    "runtime_seconds": elapsed,
                 }
+                if timeout_seconds is not None:
+                    data["timeout_seconds"] = timeout_seconds
             else:
                 payload = self._foundation_payload(workspace_dir)
                 sources = self._foundation_sources(workspace_dir)
@@ -1266,8 +1352,18 @@ class ECCService:
         )
 
     def _run_from_step_worker(
-        self, task_id: str, workspace_dir: Path, start_step: str, rerun: bool
+        self,
+        task_id: str,
+        workspace_dir: Path,
+        start_step: str,
+        rerun: bool,
+        timeout_seconds: float | None = None,
     ) -> None:
+        worker_start = time.monotonic()
+
+        def runtime_seconds() -> float:
+            return time.monotonic() - worker_start
+
         def update(**fields) -> None:
             with _TASKS_LOCK:
                 _TASKS[task_id] = {
@@ -1278,7 +1374,7 @@ class ECCService:
 
         lock = self._workspace_lock(workspace_dir)
         if not lock.acquire(blocking=False):
-            update(status="failed", error="workspace is locked by another run")
+            update(status="failed", error="workspace is locked by another run", runtime_seconds=runtime_seconds())
             return
         try:
             update(status="running")
@@ -1287,11 +1383,19 @@ class ECCService:
                 ECCRequest(cmd="load_workspace", data={"directory": str(workspace_dir)})
             )
             if load.response != ResponseEnum.success.value:
-                update(status="failed", error="; ".join(load.message))
+                update(
+                    status="failed",
+                    error="; ".join(load.message),
+                    runtime_seconds=runtime_seconds(),
+                )
                 return
             steps = [s.name for s in service.engine_flow.workspace_steps]
             if start_step not in steps:
-                update(status="failed", error=f"unknown step: {start_step}")
+                update(
+                    status="failed",
+                    error=f"unknown step: {start_step}",
+                    runtime_seconds=runtime_seconds(),
+                )
                 return
             pdk_root = service._refresh_workspace_pdk_root(workspace_dir)
             removed_artifacts = service._cleanup_stale_step_artifacts(workspace_dir, start_step)
@@ -1301,7 +1405,19 @@ class ECCService:
                 rebuilt_configs=rebuilt_configs,
                 pdk_root=pdk_root or "",
             )
+            deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
             for step in steps[steps.index(start_step) :]:
+                remaining_timeout = None
+                if deadline is not None:
+                    remaining_timeout = deadline - time.monotonic()
+                    if remaining_timeout <= 0:
+                        update(
+                            status="failed",
+                            current_step=step,
+                            error=f"run_from_step timed out after {timeout_seconds:.1f}s",
+                            runtime_seconds=runtime_seconds(),
+                        )
+                        return
                 update(current_step=step)
                 gui_notify.notify_to(
                     str(workspace_dir),
@@ -1317,26 +1433,29 @@ class ECCService:
                         message=[f"running {step}"],
                     ),
                 )
-                result = service.run_step(
-                    ECCRequest(cmd="run_step", data={"step": step, "rerun": rerun})
-                )
+                run_step_data = {"step": step, "rerun": rerun}
+                if remaining_timeout is not None:
+                    run_step_data["timeout_seconds"] = remaining_timeout
+                result = service.run_step(ECCRequest(cmd="run_step", data=run_step_data))
                 if result.response != ResponseEnum.success.value:
                     update(
                         status="failed",
                         current_step=step,
                         result=result.model_dump(),
                         error="; ".join(result.message),
+                        runtime_seconds=runtime_seconds(),
                     )
                     return
             update(
                 status="success",
                 current_step="",
                 error="",
+                runtime_seconds=runtime_seconds(),
                 completed_at=datetime.now(UTC).isoformat(),
             )
         except Exception as exc:
             logger.exception("run_from_step: background worker failed")
-            update(status="error", error=str(exc))
+            update(status="error", error=str(exc), runtime_seconds=runtime_seconds())
         finally:
             lock.release()
 
@@ -1346,6 +1465,9 @@ class ECCService:
             step = str(request.data.get("step") or "").strip()
             if not step:
                 raise ValueError("missing step")
+            timeout_seconds = _parse_positive_float(
+                request.data.get("timeout_seconds"), "timeout_seconds"
+            )
             task_id = uuid.uuid4().hex
             task = {
                 "task_id": task_id,
@@ -1357,11 +1479,19 @@ class ECCService:
                 "updated_at": datetime.now(UTC).isoformat(),
                 "error": "",
             }
+            if timeout_seconds is not None:
+                task["timeout_seconds"] = timeout_seconds
             with _TASKS_LOCK:
                 _TASKS[task_id] = task
             thread = threading.Thread(
                 target=self._run_from_step_worker,
-                args=(task_id, workspace_dir, step, bool(request.data.get("rerun", True))),
+                args=(
+                    task_id,
+                    workspace_dir,
+                    step,
+                    bool(request.data.get("rerun", True)),
+                    timeout_seconds,
+                ),
                 daemon=True,
             )
             thread.start()
@@ -1852,8 +1982,19 @@ class ECCService:
         data = request.data
         step = data.get("step", "")
         rerun = data.get("rerun", "")
+        try:
+            timeout_seconds = _parse_positive_float(data.get("timeout_seconds"), "timeout_seconds")
+        except ValueError as exc:
+            return ECCResponse(
+                cmd=request.cmd,
+                response=ResponseEnum.error.value,
+                data={"step": step, "state": "Unstart"},
+                message=[str(exc)],
+            )
 
         response_data = {"step": step, "state": "Unstart"}
+        if timeout_seconds is not None:
+            response_data["timeout_seconds"] = timeout_seconds
 
         # check data
         if self.workspace is None or not os.path.exists(self.workspace.directory):
@@ -1867,12 +2008,24 @@ class ECCService:
         # process cmd
         state = StateEnum.Unstart
         try:
-            state = self.engine_flow.run_step(step, rerun)
+            state = self.engine_flow.run_step(step, rerun, timeout_seconds=timeout_seconds)
         except Exception:
             state = StateEnum.Imcomplete
             logger.exception("run_step: engine_flow.run_step() raised exception")
 
         response_data["state"] = state.value
+        flow_step = next(
+            (
+                item
+                for item in self.workspace.flow.data.get("steps", [])
+                if isinstance(item, dict) and item.get("name") == step
+            ),
+            None,
+        )
+        if isinstance(flow_step, dict):
+            for key in ("runtime_seconds", "timeout_seconds", "timed_out"):
+                if key in flow_step:
+                    response_data[key] = flow_step[key]
 
         if StateEnum.Success == state:
             return ECCResponse(
@@ -1882,6 +2035,16 @@ class ECCService:
                 message=[f"run step {step} success : {self.workspace.directory}"],
             )
         else:
+            if response_data.get("timed_out"):
+                effective_timeout = response_data.get("timeout_seconds", timeout_seconds)
+                return ECCResponse(
+                    cmd=request.cmd,
+                    response=ResponseEnum.failed.value,
+                    data=response_data,
+                    message=[
+                        f"run step {step} timed out after {float(effective_timeout):.1f}s : {self.workspace.directory}"
+                    ],
+                )
             return ECCResponse(
                 cmd=request.cmd,
                 response=ResponseEnum.failed.value,

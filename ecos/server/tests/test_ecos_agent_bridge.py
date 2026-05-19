@@ -1025,6 +1025,37 @@ def test_extract_foundation_data_forwards_base_delta_scope_options(tmp_path: Pat
     assert response.data["manifest"]["storage_layout"] == "base_delta_v1"
 
 
+def test_extract_foundation_data_timeout_terminates_worker(tmp_path: Path, monkeypatch):
+    class _SlowExtractor:
+        def __init__(self, workspace_dir: Path, *, profile: str) -> None:
+            self.workspace_dir = Path(workspace_dir)
+            self.profile = profile
+
+        def extract(self, **kwargs):
+            time.sleep(10)
+
+    monkeypatch.setattr("ecos_server.ecc.services.ecc._foundation_extractor_class", lambda: _SlowExtractor)
+    ws = _workspace(tmp_path)
+    service = ECCService()
+
+    start = time.monotonic()
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={
+                "directory": str(ws),
+                "profile": "iccd_full_v1",
+                "timeout_seconds": 0.1,
+            },
+        )
+    )
+    elapsed = time.monotonic() - start
+
+    assert response.response == ResponseEnum.error.value
+    assert "timed out" in response.message[0]
+    assert elapsed < 2.0
+
+
 def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):
     ws = _workspace(tmp_path)
     service = ECCService()
@@ -1120,6 +1151,70 @@ def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_p
     assert "raw_refs" not in manifest["artifacts"]
     assert [item["name"] for item in response.data["summary"]["flow"]["steps"]] == ["place"]
     assert not (ws / "foundation_data" / "ecc" / "raw_refs" / "artifacts.json").exists()
+
+
+def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+
+    def fake_worker(self, task_id, workspace_dir, start_step, rerun, timeout_seconds=None):
+        captured.update(
+            {
+                "task_id": task_id,
+                "workspace_dir": workspace_dir,
+                "start_step": start_step,
+                "rerun": rerun,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+
+    class InlineThread:
+        def __init__(self, target, args, daemon):
+            self._target = target
+            self._args = args
+            self.daemon = daemon
+
+        def start(self):
+            self._target(*self._args)
+
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    monkeypatch.setattr(ECCService, "_run_from_step_worker", fake_worker)
+    monkeypatch.setattr("ecos_server.ecc.services.ecc.threading.Thread", InlineThread)
+
+    response = service.run_from_step(
+        ECCRequest(
+            cmd="run_from_step",
+            data={"directory": str(ws), "step": "place", "rerun": True, "timeout_seconds": 5400},
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    assert captured["workspace_dir"] == ws
+    assert captured["start_step"] == "place"
+    assert captured["rerun"] is True
+    assert captured["timeout_seconds"] == 5400.0
+    assert response.data["timeout_seconds"] == 5400.0
+
+
+def test_run_from_step_worker_records_runtime_on_unknown_step(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    task_id = "task-runtime"
+    from ecos_server.ecc.services import ecc as ecc_module
+
+    with ecc_module._TASKS_LOCK:
+        ecc_module._TASKS[task_id] = {
+            "task_id": task_id,
+            "workspace": str(ws),
+            "status": "queued",
+        }
+
+    service._run_from_step_worker(task_id, ws, "missing", True, timeout_seconds=1.0)
+
+    tasks = {task["task_id"]: task for task in service._task_snapshot(ws)}
+    assert tasks[task_id]["status"] == "failed"
+    assert tasks[task_id]["error"]
+    assert isinstance(tasks[task_id]["runtime_seconds"], float)
 
 
 def test_extract_foundation_data_rejects_unknown_stage_filter(tmp_path: Path):

@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from ecos_server.ecc.schemas import ECCRequest, ResponseEnum
+from ecos_server.ecc.schemas import ECCRequest, ECCResponse, ResponseEnum
 from ecos_server.ecc.services.ecc import ECCService
 
 
@@ -1156,7 +1156,15 @@ def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_p
 def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path: Path):
     captured: dict[str, object] = {}
 
-    def fake_worker(self, task_id, workspace_dir, start_step, rerun, timeout_seconds=None):
+    def fake_worker(
+        self,
+        task_id,
+        workspace_dir,
+        start_step,
+        rerun,
+        timeout_seconds=None,
+        stale_task_seconds=None,
+    ):
         captured.update(
             {
                 "task_id": task_id,
@@ -1164,6 +1172,7 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
                 "start_step": start_step,
                 "rerun": rerun,
                 "timeout_seconds": timeout_seconds,
+                "stale_task_seconds": stale_task_seconds,
             }
         )
 
@@ -1184,7 +1193,13 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
     response = service.run_from_step(
         ECCRequest(
             cmd="run_from_step",
-            data={"directory": str(ws), "step": "place", "rerun": True, "timeout_seconds": 5400},
+            data={
+                "directory": str(ws),
+                "step": "place",
+                "rerun": True,
+                "timeout_seconds": 5400,
+                "stale_task_seconds": 900,
+            },
         )
     )
 
@@ -1193,7 +1208,9 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
     assert captured["start_step"] == "place"
     assert captured["rerun"] is True
     assert captured["timeout_seconds"] == 5400.0
+    assert captured["stale_task_seconds"] == 900.0
     assert response.data["timeout_seconds"] == 5400.0
+    assert response.data["stale_task_seconds"] == 900.0
 
 
 def test_run_from_step_worker_records_runtime_on_unknown_step(tmp_path: Path):
@@ -1215,6 +1232,80 @@ def test_run_from_step_worker_records_runtime_on_unknown_step(tmp_path: Path):
     assert tasks[task_id]["status"] == "failed"
     assert tasks[task_id]["error"]
     assert isinstance(tasks[task_id]["runtime_seconds"], float)
+
+
+def test_run_from_step_worker_fails_when_step_result_leaves_flow_ongoing(
+    monkeypatch, tmp_path: Path
+):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    flow_path = ws / "home" / "flow.json"
+    flow_path.write_text(
+        json.dumps({"steps": [{"name": "place", "tool": "dreamplace", "state": "Ongoing"}]}),
+        encoding="utf-8",
+    )
+    task_id = "task-stale-step"
+    from ecos_server.ecc.services import ecc as ecc_module
+
+    with ecc_module._TASKS_LOCK:
+        ecc_module._TASKS[task_id] = {
+            "task_id": task_id,
+            "workspace": str(ws),
+            "status": "queued",
+        }
+
+    def fake_load_workspace(self, request):
+        self.workspace = type(
+            "Workspace",
+            (),
+            {
+                "directory": str(ws),
+                "flow": type(
+                    "Flow",
+                    (),
+                    {
+                        "data": {
+                            "steps": [
+                                {"name": "place", "tool": "dreamplace", "state": "Ongoing"}
+                            ]
+                        }
+                    },
+                )(),
+            },
+        )()
+        self.engine_flow = type(
+            "EngineFlow",
+            (),
+            {"workspace_steps": [type("Step", (), {"name": "place"})()]},
+        )()
+        return ECCResponse(
+            cmd="load_workspace",
+            response=ResponseEnum.success.value,
+            data={},
+            message=["load workspace success"],
+        )
+
+    def fake_run_step(self, request):
+        return ECCResponse(
+            cmd="run_step",
+            response=ResponseEnum.success.value,
+            data={"step": "place", "state": "Success"},
+            message=["run step place success"],
+        )
+
+    monkeypatch.setattr(ECCService, "load_workspace", fake_load_workspace)
+    monkeypatch.setattr(ECCService, "_refresh_workspace_pdk_root", lambda self, workspace_dir: "")
+    monkeypatch.setattr(ECCService, "_cleanup_stale_step_artifacts", lambda self, workspace_dir, step: [])
+    monkeypatch.setattr(ECCService, "_prepare_rerun_step_configs", lambda self, workspace_dir, step: [])
+    monkeypatch.setattr(ECCService, "run_step", fake_run_step)
+    monkeypatch.setattr("ecos_server.ecc.services.ecc.gui_notify.notify_to", lambda *args, **kwargs: None)
+
+    service._run_from_step_worker(task_id, ws, "place", True, timeout_seconds=10.0)
+
+    tasks = {task["task_id"]: task for task in service._task_snapshot(ws)}
+    assert tasks[task_id]["status"] == "failed"
+    assert "did not reach Success" in tasks[task_id]["error"]
+    assert tasks[task_id]["current_step"] == "place"
 
 
 def test_extract_foundation_data_rejects_unknown_stage_filter(tmp_path: Path):

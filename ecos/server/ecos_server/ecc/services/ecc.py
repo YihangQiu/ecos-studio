@@ -609,6 +609,14 @@ class ECCService:
             return tasks
         return [task for task in tasks if task.get("workspace") == str(workspace_dir)]
 
+    def _flow_step_state(self, workspace_dir: Path, step_name: str) -> str | None:
+        flow = self._read_json(workspace_dir / "home" / "flow.json")
+        for step in flow.get("steps", []):
+            if isinstance(step, dict) and step.get("name") == step_name:
+                state = step.get("state")
+                return str(state) if state is not None else None
+        return None
+
     @staticmethod
     def _workspace_lock(workspace_dir: Path) -> threading.Lock:
         key = str(workspace_dir)
@@ -1358,6 +1366,7 @@ class ECCService:
         start_step: str,
         rerun: bool,
         timeout_seconds: float | None = None,
+        stale_task_seconds: float | None = None,
     ) -> None:
         worker_start = time.monotonic()
 
@@ -1436,6 +1445,8 @@ class ECCService:
                 run_step_data = {"step": step, "rerun": rerun}
                 if remaining_timeout is not None:
                     run_step_data["timeout_seconds"] = remaining_timeout
+                if stale_task_seconds is not None:
+                    run_step_data["stale_seconds"] = stale_task_seconds
                 result = service.run_step(ECCRequest(cmd="run_step", data=run_step_data))
                 if result.response != ResponseEnum.success.value:
                     update(
@@ -1443,6 +1454,19 @@ class ECCService:
                         current_step=step,
                         result=result.model_dump(),
                         error="; ".join(result.message),
+                        runtime_seconds=runtime_seconds(),
+                    )
+                    return
+                step_state = service._flow_step_state(workspace_dir, step)
+                if step_state != "Success":
+                    update(
+                        status="failed",
+                        current_step=step,
+                        result=result.model_dump(),
+                        error=(
+                            f"run_from_step step {step} did not reach Success "
+                            f"after run_step returned success; flow state is {step_state or 'missing'}"
+                        ),
                         runtime_seconds=runtime_seconds(),
                     )
                     return
@@ -1468,6 +1492,9 @@ class ECCService:
             timeout_seconds = _parse_positive_float(
                 request.data.get("timeout_seconds"), "timeout_seconds"
             )
+            stale_task_seconds = _parse_positive_float(
+                request.data.get("stale_task_seconds"), "stale_task_seconds"
+            )
             task_id = uuid.uuid4().hex
             task = {
                 "task_id": task_id,
@@ -1481,6 +1508,8 @@ class ECCService:
             }
             if timeout_seconds is not None:
                 task["timeout_seconds"] = timeout_seconds
+            if stale_task_seconds is not None:
+                task["stale_task_seconds"] = stale_task_seconds
             with _TASKS_LOCK:
                 _TASKS[task_id] = task
             thread = threading.Thread(
@@ -1491,6 +1520,7 @@ class ECCService:
                     step,
                     bool(request.data.get("rerun", True)),
                     timeout_seconds,
+                    stale_task_seconds,
                 ),
                 daemon=True,
             )
@@ -1984,6 +2014,7 @@ class ECCService:
         rerun = data.get("rerun", "")
         try:
             timeout_seconds = _parse_positive_float(data.get("timeout_seconds"), "timeout_seconds")
+            stale_seconds = _parse_positive_float(data.get("stale_seconds"), "stale_seconds")
         except ValueError as exc:
             return ECCResponse(
                 cmd=request.cmd,
@@ -1995,6 +2026,8 @@ class ECCService:
         response_data = {"step": step, "state": "Unstart"}
         if timeout_seconds is not None:
             response_data["timeout_seconds"] = timeout_seconds
+        if stale_seconds is not None:
+            response_data["stale_seconds"] = stale_seconds
 
         # check data
         if self.workspace is None or not os.path.exists(self.workspace.directory):
@@ -2008,7 +2041,12 @@ class ECCService:
         # process cmd
         state = StateEnum.Unstart
         try:
-            state = self.engine_flow.run_step(step, rerun, timeout_seconds=timeout_seconds)
+            state = self.engine_flow.run_step(
+                step,
+                rerun,
+                timeout_seconds=timeout_seconds,
+                stale_seconds=stale_seconds,
+            )
         except Exception:
             state = StateEnum.Imcomplete
             logger.exception("run_step: engine_flow.run_step() raised exception")
@@ -2023,7 +2061,7 @@ class ECCService:
             None,
         )
         if isinstance(flow_step, dict):
-            for key in ("runtime_seconds", "timeout_seconds", "timed_out"):
+            for key in ("runtime_seconds", "timeout_seconds", "timed_out", "stale_seconds", "stale_timed_out"):
                 if key in flow_step:
                     response_data[key] = flow_step[key]
 
@@ -2043,6 +2081,16 @@ class ECCService:
                     data=response_data,
                     message=[
                         f"run step {step} timed out after {float(effective_timeout):.1f}s : {self.workspace.directory}"
+                    ],
+                )
+            if response_data.get("stale_timed_out"):
+                effective_stale = response_data.get("stale_seconds", stale_seconds)
+                return ECCResponse(
+                    cmd=request.cmd,
+                    response=ResponseEnum.failed.value,
+                    data=response_data,
+                    message=[
+                        f"run step {step} stale timed out after {float(effective_stale):.1f}s without progress : {self.workspace.directory}"
                     ],
                 )
             return ECCResponse(

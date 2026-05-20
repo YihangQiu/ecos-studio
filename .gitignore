@@ -1,4 +1,5 @@
 ws
+logs/
 bazel-*
 .pnpm-store
 .vscode

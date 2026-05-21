@@ -23,6 +23,7 @@ from ..schemas import (
     ResponseEnum,
 )
 from ..sse import server_notify
+from ..._log import ensure_api_logger
 
 gui_notify = server_notify()
 
@@ -223,11 +224,28 @@ def _extract_iccd_full_profile_worker(
     options: dict,
     result_queue,
 ) -> None:
+    worker_logger = ensure_api_logger()
     try:
+        worker_logger.info(
+            "extract_foundation_data: worker extraction started workspace=%s profile=%s options=%s",
+            workspace_dir,
+            profile,
+            options,
+        )
         extractor_cls = _foundation_extractor_class()
         extractor_cls(Path(workspace_dir), profile=profile).extract(**options)
+        worker_logger.info(
+            "extract_foundation_data: worker extraction completed workspace=%s profile=%s",
+            workspace_dir,
+            profile,
+        )
         result_queue.put({"status": "success"})
     except BaseException as exc:  # noqa: BLE001 - returned across process boundary
+        worker_logger.exception(
+            "extract_foundation_data: worker extraction failed workspace=%s profile=%s",
+            workspace_dir,
+            profile,
+        )
         result_queue.put(
             {
                 "status": "error",

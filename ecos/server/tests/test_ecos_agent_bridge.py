@@ -4,6 +4,7 @@ import json
 import time
 from pathlib import Path
 
+import ecos_server.ecc.services.ecc as ecc_service_module
 from ecos_server.ecc.schemas import ECCRequest, ECCResponse, ResponseEnum
 from ecos_server.ecc.services.ecc import ECCService
 
@@ -1026,15 +1027,50 @@ def test_extract_foundation_data_forwards_base_delta_scope_options(tmp_path: Pat
 
 
 def test_extract_foundation_data_timeout_terminates_worker(tmp_path: Path, monkeypatch):
-    class _SlowExtractor:
-        def __init__(self, workspace_dir: Path, *, profile: str) -> None:
-            self.workspace_dir = Path(workspace_dir)
-            self.profile = profile
+    events: list[str] = []
 
-        def extract(self, **kwargs):
-            time.sleep(10)
+    class _FakeQueue:
+        def close(self) -> None:
+            events.append("queue.close")
 
-    monkeypatch.setattr("ecos_server.ecc.services.ecc._foundation_extractor_class", lambda: _SlowExtractor)
+        def join_thread(self) -> None:
+            events.append("queue.join_thread")
+
+    class _HangingProcess:
+        pid = 12345
+        exitcode = None
+
+        def __init__(self, *, target, args) -> None:
+            self._alive_checks = 0
+
+        def start(self) -> None:
+            events.append("process.start")
+
+        def join(self, timeout=None) -> None:
+            events.append(f"process.join:{timeout}")
+
+        def is_alive(self) -> bool:
+            self._alive_checks += 1
+            return self._alive_checks == 1
+
+        def terminate(self) -> None:
+            events.append("process.terminate")
+
+        def kill(self) -> None:
+            events.append("process.kill")
+
+    class _FakeContext:
+        def Queue(self, maxsize: int = 0):
+            return _FakeQueue()
+
+        def Process(self, *, target, args):
+            return _HangingProcess(target=target, args=args)
+
+    monkeypatch.setattr(
+        ecc_service_module.multiprocessing,
+        "get_context",
+        lambda method: _FakeContext(),
+    )
     ws = _workspace(tmp_path)
     service = ECCService()
 
@@ -1054,6 +1090,83 @@ def test_extract_foundation_data_timeout_terminates_worker(tmp_path: Path, monke
     assert response.response == ResponseEnum.error.value
     assert "timed out" in response.message[0]
     assert elapsed < 2.0
+    assert "process.terminate" in events
+    assert "process.kill" not in events
+    assert events[-2:] == ["queue.close", "queue.join_thread"]
+
+
+def test_iccd_full_profile_timeout_uses_spawn_context(tmp_path: Path, monkeypatch):
+    calls: list[str] = []
+
+    class _FakeQueue:
+        def __init__(self, maxsize: int = 0) -> None:
+            self.maxsize = maxsize
+
+        def get_nowait(self):
+            return {"status": "success"}
+
+        def close(self) -> None:
+            calls.append("queue.close")
+
+        def join_thread(self) -> None:
+            calls.append("queue.join_thread")
+
+    class _FakeProcess:
+        pid = 23456
+        exitcode = 0
+
+        def __init__(self, *, target, args) -> None:
+            calls.append("context.Process")
+            self.target = target
+            self.args = args
+
+        def start(self) -> None:
+            calls.append("process.start")
+
+        def join(self, timeout=None) -> None:
+            calls.append(f"process.join:{timeout}")
+
+        def is_alive(self) -> bool:
+            return False
+
+        def terminate(self) -> None:
+            raise AssertionError("successful worker must not be terminated")
+
+        def kill(self) -> None:
+            raise AssertionError("successful worker must not be killed")
+
+    class _FakeContext:
+        def Queue(self, maxsize: int = 0):
+            calls.append("context.Queue")
+            return _FakeQueue(maxsize=maxsize)
+
+        def Process(self, *, target, args):
+            return _FakeProcess(target=target, args=args)
+
+    def _fake_get_context(method: str):
+        calls.append(f"get_context:{method}")
+        return _FakeContext()
+
+    def _forbidden_default_queue(*args, **kwargs):
+        raise AssertionError("timeout worker must not use the default multiprocessing.Queue")
+
+    def _forbidden_default_process(*args, **kwargs):
+        raise AssertionError("timeout worker must not use the default multiprocessing.Process")
+
+    monkeypatch.setattr(ecc_service_module.multiprocessing, "get_context", _fake_get_context)
+    monkeypatch.setattr(ecc_service_module.multiprocessing, "Queue", _forbidden_default_queue)
+    monkeypatch.setattr(ecc_service_module.multiprocessing, "Process", _forbidden_default_process)
+
+    ecc_service_module._run_iccd_full_profile_with_timeout(
+        tmp_path,
+        "iccd_full_v1",
+        {},
+        timeout_seconds=1.0,
+    )
+
+    assert "get_context:spawn" in calls
+    assert "context.Queue" in calls
+    assert "context.Process" in calls
 
 
 def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):

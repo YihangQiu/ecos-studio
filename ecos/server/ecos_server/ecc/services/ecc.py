@@ -27,6 +27,7 @@ from ..sse import server_notify
 gui_notify = server_notify()
 
 logger = logging.getLogger(__name__)
+api_logger = logging.getLogger("ecos.api")
 
 _TEXT_ARTIFACT_LIMIT = 120_000
 _FOUNDATION_DIR = Path("foundation_data") / "ecc"
@@ -242,28 +243,66 @@ def _run_iccd_full_profile_with_timeout(
     options: dict,
     timeout_seconds: float,
 ) -> None:
-    result_queue = multiprocessing.Queue(maxsize=1)
-    process = multiprocessing.Process(
+    mp_context = multiprocessing.get_context("spawn")
+    result_queue = mp_context.Queue(maxsize=1)
+    process = mp_context.Process(
         target=_extract_iccd_full_profile_worker,
         args=(str(workspace_dir), profile, options, result_queue),
     )
-    process.start()
-    process.join(timeout=timeout_seconds)
-    if process.is_alive():
-        process.terminate()
-        process.join(timeout=10.0)
-        if process.is_alive():
-            process.kill()
-            process.join(timeout=5.0)
-        raise TimeoutError(f"extract_foundation_data timed out after {timeout_seconds:.1f}s")
+    api_logger.info(
+        "extract_foundation_data: starting isolated worker "
+        "workspace=%s profile=%s timeout=%.1fs start_method=spawn",
+        workspace_dir,
+        profile,
+        timeout_seconds,
+    )
     try:
-        payload = result_queue.get_nowait()
-    except queue.Empty as exc:
-        if process.exitcode == 0:
-            return
-        raise RuntimeError(f"extract_foundation_data worker exited with code {process.exitcode}") from exc
-    if payload.get("status") == "error":
-        raise RuntimeError(str(payload.get("error") or "extract_foundation_data worker failed"))
+        process.start()
+        api_logger.info(
+            "extract_foundation_data: worker pid=%s started workspace=%s",
+            process.pid,
+            workspace_dir,
+        )
+        process.join(timeout=timeout_seconds)
+        if process.is_alive():
+            api_logger.warning(
+                "extract_foundation_data: worker pid=%s timed out after %.1fs; terminating",
+                process.pid,
+                timeout_seconds,
+            )
+            process.terminate()
+            process.join(timeout=10.0)
+            if process.is_alive():
+                api_logger.warning(
+                    "extract_foundation_data: worker pid=%s ignored terminate; killing",
+                    process.pid,
+                )
+                process.kill()
+                process.join(timeout=5.0)
+            raise TimeoutError(f"extract_foundation_data timed out after {timeout_seconds:.1f}s")
+        try:
+            payload = result_queue.get_nowait()
+        except queue.Empty as exc:
+            if process.exitcode == 0:
+                return
+            raise RuntimeError(
+                f"extract_foundation_data worker exited with code {process.exitcode}"
+            ) from exc
+        if payload.get("status") == "error":
+            api_logger.error(
+                "extract_foundation_data: worker pid=%s failed: %s",
+                process.pid,
+                payload.get("error"),
+            )
+            raise RuntimeError(str(payload.get("error") or "extract_foundation_data worker failed"))
+        api_logger.info(
+            "extract_foundation_data: worker pid=%s completed workspace=%s",
+            process.pid,
+            workspace_dir,
+        )
+    finally:
+        result_queue.close()
+        result_queue.join_thread()
 
 
 def _jsonl_record_count(path: Path) -> int:

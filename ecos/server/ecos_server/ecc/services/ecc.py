@@ -752,17 +752,23 @@ class ECCService:
         steps = flow.get("steps", [])
         return [step for step in steps if isinstance(step, dict)] if isinstance(steps, list) else []
 
-    def _flow_step_dirs_from(self, workspace_dir: Path, start_step: str) -> list[Path]:
+    def _flow_step_dirs_from(
+        self, workspace_dir: Path, start_step: str, end_step: str | None = None
+    ) -> list[Path]:
         steps = self._flow_steps(workspace_dir)
         start_index = None
+        end_index = None
         for index, step in enumerate(steps):
             if str(step.get("name", "")) == start_step:
                 start_index = index
-                break
-        if start_index is None:
+            if end_step is not None and str(step.get("name", "")) == end_step:
+                end_index = index
+        if end_step is None:
+            end_index = len(steps) - 1
+        if start_index is None or end_index is None or end_index < start_index:
             return []
         dirs = []
-        for step in steps[start_index:]:
+        for step in steps[start_index : end_index + 1]:
             if not isinstance(step, dict):
                 continue
             name = str(step.get("name", "")).strip()
@@ -771,14 +777,33 @@ class ECCService:
                 dirs.append(self._step_workspace_dir(workspace_dir, name, tool))
         return dirs
 
-    def _cleanup_stale_step_artifacts(self, workspace_dir: Path, start_step: str) -> list[str]:
+    def _flow_step_range(
+        self, workspace_dir: Path, start_step: str, end_step: str | None = None
+    ) -> tuple[list[dict], int, int] | None:
+        steps = self._flow_steps(workspace_dir)
+        start_index = None
+        end_index = None
+        for index, step in enumerate(steps):
+            if str(step.get("name", "")) == start_step:
+                start_index = index
+            if end_step is not None and str(step.get("name", "")) == end_step:
+                end_index = index
+        if end_step is None:
+            end_index = len(steps) - 1
+        if start_index is None or end_index is None or end_index < start_index:
+            return None
+        return steps, start_index, end_index
+
+    def _cleanup_stale_step_artifacts(
+        self, workspace_dir: Path, start_step: str, end_step: str | None = None
+    ) -> list[str]:
         """Remove stale outputs/logs for target and downstream steps before rerun.
 
         Configuration directories are intentionally preserved; this only clears
         generated artifacts that could otherwise make an old result look fresh.
         """
         removed: list[str] = []
-        for step_dir in self._flow_step_dirs_from(workspace_dir, start_step):
+        for step_dir in self._flow_step_dirs_from(workspace_dir, start_step, end_step):
             if not step_dir.exists() or not step_dir.is_dir():
                 continue
             for dirname in _STALE_STEP_DIR_NAMES:
@@ -799,15 +824,14 @@ class ECCService:
                     target.unlink(missing_ok=True)
         return removed
 
-    def _prepare_rerun_step_configs(self, workspace_dir: Path, start_step: str) -> list[str]:
+    def _prepare_rerun_step_configs(
+        self, workspace_dir: Path, start_step: str, end_step: str | None = None
+    ) -> list[str]:
         """Refresh config paths for the rerun slice after cloning or artifact cleanup."""
-        steps = self._flow_steps(workspace_dir)
-        start_index = next(
-            (index for index, step in enumerate(steps) if str(step.get("name", "")) == start_step),
-            None,
-        )
-        if start_index is None:
+        step_range = self._flow_step_range(workspace_dir, start_step, end_step)
+        if step_range is None:
             return []
+        steps, start_index, end_index = step_range
 
         parameters = self._read_json(workspace_dir / "home" / "parameters.json")
         design = str(parameters.get("Design") or "gcd")
@@ -856,6 +880,8 @@ class ECCService:
                 input_verilog = step_output(previous, "v")
             if index < start_index:
                 continue
+            if index > end_index:
+                break
 
             config_dir = current_dir / "config"
             flow_config = config_dir / "flow_config.json"
@@ -1367,6 +1393,7 @@ class ECCService:
         rerun: bool,
         timeout_seconds: float | None = None,
         stale_task_seconds: float | None = None,
+        end_step: str | None = None,
     ) -> None:
         worker_start = time.monotonic()
 
@@ -1406,16 +1433,41 @@ class ECCService:
                     runtime_seconds=runtime_seconds(),
                 )
                 return
+            if end_step is not None:
+                if end_step not in steps:
+                    update(
+                        status="failed",
+                        error=f"unknown end_step: {end_step}",
+                        runtime_seconds=runtime_seconds(),
+                    )
+                    return
+                if steps.index(end_step) < steps.index(start_step):
+                    update(
+                        status="failed",
+                        error=f"end_step {end_step} is before start step {start_step}",
+                        runtime_seconds=runtime_seconds(),
+                    )
+                    return
             pdk_root = service._refresh_workspace_pdk_root(workspace_dir)
-            removed_artifacts = service._cleanup_stale_step_artifacts(workspace_dir, start_step)
-            rebuilt_configs = service._prepare_rerun_step_configs(workspace_dir, start_step)
+            if end_step is None:
+                removed_artifacts = service._cleanup_stale_step_artifacts(workspace_dir, start_step)
+                rebuilt_configs = service._prepare_rerun_step_configs(workspace_dir, start_step)
+            else:
+                removed_artifacts = service._cleanup_stale_step_artifacts(
+                    workspace_dir, start_step, end_step
+                )
+                rebuilt_configs = service._prepare_rerun_step_configs(
+                    workspace_dir, start_step, end_step
+                )
             update(
                 cleaned_artifacts=removed_artifacts,
                 rebuilt_configs=rebuilt_configs,
                 pdk_root=pdk_root or "",
+                end_step=end_step or "",
             )
             deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
-            for step in steps[steps.index(start_step) :]:
+            end_index = steps.index(end_step) if end_step is not None else len(steps) - 1
+            for step in steps[steps.index(start_step) : end_index + 1]:
                 remaining_timeout = None
                 if deadline is not None:
                     remaining_timeout = deadline - time.monotonic()
@@ -1495,6 +1547,7 @@ class ECCService:
             stale_task_seconds = _parse_positive_float(
                 request.data.get("stale_task_seconds"), "stale_task_seconds"
             )
+            end_step = str(request.data.get("end_step") or "").strip() or None
             task_id = uuid.uuid4().hex
             task = {
                 "task_id": task_id,
@@ -1510,6 +1563,8 @@ class ECCService:
                 task["timeout_seconds"] = timeout_seconds
             if stale_task_seconds is not None:
                 task["stale_task_seconds"] = stale_task_seconds
+            if end_step is not None:
+                task["end_step"] = end_step
             with _TASKS_LOCK:
                 _TASKS[task_id] = task
             thread = threading.Thread(
@@ -1521,6 +1576,7 @@ class ECCService:
                     bool(request.data.get("rerun", True)),
                     timeout_seconds,
                     stale_task_seconds,
+                    end_step,
                 ),
                 daemon=True,
             )

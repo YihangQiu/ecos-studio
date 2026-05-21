@@ -1164,6 +1164,7 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
         rerun,
         timeout_seconds=None,
         stale_task_seconds=None,
+        end_step=None,
     ):
         captured.update(
             {
@@ -1173,6 +1174,7 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
                 "rerun": rerun,
                 "timeout_seconds": timeout_seconds,
                 "stale_task_seconds": stale_task_seconds,
+                "end_step": end_step,
             }
         )
 
@@ -1199,6 +1201,7 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
                 "rerun": True,
                 "timeout_seconds": 5400,
                 "stale_task_seconds": 900,
+                "end_step": "route",
             },
         )
     )
@@ -1209,8 +1212,97 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
     assert captured["rerun"] is True
     assert captured["timeout_seconds"] == 5400.0
     assert captured["stale_task_seconds"] == 900.0
+    assert captured["end_step"] == "route"
     assert response.data["timeout_seconds"] == 5400.0
     assert response.data["stale_task_seconds"] == 900.0
+    assert response.data["end_step"] == "route"
+
+
+def test_run_from_step_worker_stops_at_end_step_and_leaves_drc_filler_unrun(
+    monkeypatch, tmp_path: Path
+):
+    ws = _workspace(tmp_path)
+    flow_path = ws / "home" / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"name": "place", "tool": "dreamplace", "state": "Success"},
+                    {"name": "CTS", "tool": "ecc", "state": "Success"},
+                    {"name": "route", "tool": "ecc", "state": "Success"},
+                    {"name": "drc", "tool": "ecc", "state": "Pending"},
+                    {"name": "filler", "tool": "ecc", "state": "Pending"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    task_id = "task-route-slice"
+    from ecos_server.ecc.services import ecc as ecc_module
+
+    with ecc_module._TASKS_LOCK:
+        ecc_module._TASKS[task_id] = {
+            "task_id": task_id,
+            "workspace": str(ws),
+            "status": "queued",
+        }
+
+    run_steps: list[str] = []
+    cleanup_args: list[tuple[str, str | None]] = []
+    config_args: list[tuple[str, str | None]] = []
+
+    def fake_load_workspace(self, request):
+        self.workspace = type("Workspace", (), {"directory": str(ws)})()
+        self.engine_flow = type(
+            "EngineFlow",
+            (),
+            {
+                "workspace_steps": [
+                    type("Step", (), {"name": name})()
+                    for name in ("place", "CTS", "route", "drc", "filler")
+                ]
+            },
+        )()
+        return ECCResponse(
+            cmd="load_workspace",
+            response=ResponseEnum.success.value,
+            data={},
+            message=["load workspace success"],
+        )
+
+    def fake_run_step(self, request):
+        run_steps.append(str(request.data["step"]))
+        return ECCResponse(
+            cmd="run_step",
+            response=ResponseEnum.success.value,
+            data={"step": request.data["step"], "state": "Success"},
+            message=[f"run step {request.data['step']} success"],
+        )
+
+    def fake_cleanup(self, workspace_dir, start_step, end_step=None):
+        cleanup_args.append((start_step, end_step))
+        return []
+
+    def fake_prepare(self, workspace_dir, start_step, end_step=None):
+        config_args.append((start_step, end_step))
+        return []
+
+    monkeypatch.setattr(ECCService, "load_workspace", fake_load_workspace)
+    monkeypatch.setattr(ECCService, "_refresh_workspace_pdk_root", lambda self, workspace_dir: "")
+    monkeypatch.setattr(ECCService, "_cleanup_stale_step_artifacts", fake_cleanup)
+    monkeypatch.setattr(ECCService, "_prepare_rerun_step_configs", fake_prepare)
+    monkeypatch.setattr(ECCService, "run_step", fake_run_step)
+    monkeypatch.setattr("ecos_server.ecc.services.ecc.gui_notify.notify_to", lambda *args, **kwargs: None)
+
+    service = ECCService()
+    service._run_from_step_worker(task_id, ws, "place", True, timeout_seconds=10.0, end_step="route")
+
+    tasks = {task["task_id"]: task for task in service._task_snapshot(ws)}
+    assert tasks[task_id]["status"] == "success"
+    assert tasks[task_id]["end_step"] == "route"
+    assert run_steps == ["place", "CTS", "route"]
+    assert cleanup_args == [("place", "route")]
+    assert config_args == [("place", "route")]
 
 
 def test_run_from_step_worker_records_runtime_on_unknown_step(tmp_path: Path):

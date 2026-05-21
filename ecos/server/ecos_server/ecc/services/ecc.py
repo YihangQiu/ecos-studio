@@ -225,6 +225,21 @@ def _extract_iccd_full_profile_worker(
     result_queue,
 ) -> None:
     worker_logger = ensure_api_logger()
+
+    class _QueueProgressHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            try:
+                message = self.format(record)
+                result_queue.put({"status": "progress", "message": message}, block=False)
+            except Exception:
+                return
+
+    progress_handler = _QueueProgressHandler()
+    progress_handler.setFormatter(logging.Formatter("%(message)s"))
+    foundation_logger = logging.getLogger("ecos.api.foundation")
+    previous_level = foundation_logger.level
+    foundation_logger.addHandler(progress_handler)
+    foundation_logger.setLevel(logging.INFO)
     try:
         worker_logger.info(
             "extract_foundation_data: worker extraction started workspace=%s profile=%s options=%s",
@@ -253,6 +268,9 @@ def _extract_iccd_full_profile_worker(
                 "traceback": traceback.format_exc(),
             }
         )
+    finally:
+        foundation_logger.removeHandler(progress_handler)
+        foundation_logger.setLevel(previous_level)
 
 
 def _run_iccd_full_profile_with_timeout(
@@ -262,7 +280,7 @@ def _run_iccd_full_profile_with_timeout(
     timeout_seconds: float,
 ) -> None:
     mp_context = multiprocessing.get_context("spawn")
-    result_queue = mp_context.Queue(maxsize=1)
+    result_queue = mp_context.Queue(maxsize=128)
     process = mp_context.Process(
         target=_extract_iccd_full_profile_worker,
         args=(str(workspace_dir), profile, options, result_queue),
@@ -281,7 +299,27 @@ def _run_iccd_full_profile_with_timeout(
             process.pid,
             workspace_dir,
         )
-        process.join(timeout=timeout_seconds)
+        pending_payload = None
+        deadline = time.monotonic() + timeout_seconds
+        while process.is_alive():
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0.0:
+                break
+            process.join(timeout=min(5.0, remaining))
+            while True:
+                try:
+                    progress = result_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if progress.get("status") == "progress":
+                    api_logger.info(
+                        "extract_foundation_data: worker pid=%s progress %s",
+                        process.pid,
+                        progress.get("message"),
+                    )
+                else:
+                    pending_payload = progress
+                    break
         if process.is_alive():
             api_logger.warning(
                 "extract_foundation_data: worker pid=%s timed out after %.1fs; terminating",
@@ -298,14 +336,27 @@ def _run_iccd_full_profile_with_timeout(
                 process.kill()
                 process.join(timeout=5.0)
             raise TimeoutError(f"extract_foundation_data timed out after {timeout_seconds:.1f}s")
-        try:
-            payload = result_queue.get_nowait()
-        except queue.Empty as exc:
-            if process.exitcode == 0:
-                return
-            raise RuntimeError(
-                f"extract_foundation_data worker exited with code {process.exitcode}"
-            ) from exc
+        payload = pending_payload
+        while True:
+            try:
+                item = result_queue.get_nowait()
+            except queue.Empty as exc:
+                if payload is None:
+                    if process.exitcode == 0:
+                        return
+                    raise RuntimeError(
+                        f"extract_foundation_data worker exited with code {process.exitcode}"
+                    ) from exc
+                break
+            if item.get("status") == "progress":
+                api_logger.info(
+                    "extract_foundation_data: worker pid=%s progress %s",
+                    process.pid,
+                    item.get("message"),
+                )
+                continue
+            payload = item
+            break
         if payload.get("status") == "error":
             api_logger.error(
                 "extract_foundation_data: worker pid=%s failed: %s",

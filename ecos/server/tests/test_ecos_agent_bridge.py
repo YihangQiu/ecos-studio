@@ -1119,6 +1119,7 @@ def test_iccd_full_profile_timeout_uses_spawn_context(tmp_path: Path, monkeypatc
             calls.append("context.Process")
             self.target = target
             self.args = args
+            self._alive_checks = 0
 
         def start(self) -> None:
             calls.append("process.start")
@@ -1127,7 +1128,8 @@ def test_iccd_full_profile_timeout_uses_spawn_context(tmp_path: Path, monkeypatc
             calls.append(f"process.join:{timeout}")
 
         def is_alive(self) -> bool:
-            return False
+            self._alive_checks += 1
+            return self._alive_checks == 1
 
         def terminate(self) -> None:
             raise AssertionError("successful worker must not be terminated")
@@ -1167,6 +1169,79 @@ def test_iccd_full_profile_timeout_uses_spawn_context(tmp_path: Path, monkeypatc
     assert "get_context:spawn" in calls
     assert "context.Queue" in calls
     assert "context.Process" in calls
+    join_timeouts = [
+        float(call.removeprefix("process.join:"))
+        for call in calls
+        if call.startswith("process.join:")
+    ]
+    assert len(join_timeouts) == 1
+    assert 0.0 < join_timeouts[0] <= 1.0
+
+
+def test_iccd_full_profile_timeout_forwards_worker_progress_logs(tmp_path: Path, monkeypatch, caplog):
+    class _FakeQueue:
+        def __init__(self, maxsize: int = 0) -> None:
+            self.items = [
+                {"status": "progress", "message": "foundation_stage start name=write_vectors workspace=/tmp/ws"},
+                {"status": "success"},
+            ]
+
+        def get_nowait(self):
+            if not self.items:
+                raise ecc_service_module.queue.Empty
+            return self.items.pop(0)
+
+        def close(self) -> None:
+            pass
+
+        def join_thread(self) -> None:
+            pass
+
+    class _FakeProcess:
+        pid = 34567
+        exitcode = 0
+
+        def __init__(self, *, target, args) -> None:
+            self._alive_checks = 0
+
+        def start(self) -> None:
+            pass
+
+        def join(self, timeout=None) -> None:
+            pass
+
+        def is_alive(self) -> bool:
+            self._alive_checks += 1
+            return self._alive_checks == 1
+
+        def terminate(self) -> None:
+            raise AssertionError("successful worker must not be terminated")
+
+        def kill(self) -> None:
+            raise AssertionError("successful worker must not be killed")
+
+    class _FakeContext:
+        def Queue(self, maxsize: int = 0):
+            return _FakeQueue(maxsize=maxsize)
+
+        def Process(self, *, target, args):
+            return _FakeProcess(target=target, args=args)
+
+    monkeypatch.setattr(ecc_service_module.multiprocessing, "get_context", lambda method: _FakeContext())
+
+    with caplog.at_level("INFO", logger="ecos.api"):
+        ecc_service_module._run_iccd_full_profile_with_timeout(
+            tmp_path,
+            "iccd_full_v1",
+            {},
+            timeout_seconds=1.0,
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "worker pid=34567 progress foundation_stage start name=write_vectors" in message
+        for message in messages
+    )
 
 
 def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):

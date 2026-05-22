@@ -61,6 +61,8 @@ _FOUNDATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _FOUNDATION_SCHEMA_VERSION = "foundation-data-ecc-parquet-v1"
 _FOUNDATION_CONTRACT_NAME = "foundation_data/ecc"
 _FOUNDATION_STORAGE_FORMAT = "parquet+json_views"
+_ROUTE_COMPLETION_MODES = {"full_route", "space_router_label"}
+_SPACE_ROUTER_LABEL_MODE = "space_router_label"
 _ENTITY_KEY_FILTER_COLUMNS = {
     "nets": "net_key",
     "net_terminals": "net_key",
@@ -306,7 +308,7 @@ def _run_iccd_full_profile_with_timeout(
             if remaining <= 0.0:
                 break
             process.join(timeout=min(5.0, remaining))
-            while True:
+            while hasattr(result_queue, "get_nowait"):
                 try:
                     progress = result_queue.get_nowait()
                 except queue.Empty:
@@ -337,7 +339,7 @@ def _run_iccd_full_profile_with_timeout(
                 process.join(timeout=5.0)
             raise TimeoutError(f"extract_foundation_data timed out after {timeout_seconds:.1f}s")
         payload = pending_payload
-        while True:
+        while hasattr(result_queue, "get_nowait"):
             try:
                 item = result_queue.get_nowait()
             except queue.Empty as exc:
@@ -357,6 +359,10 @@ def _run_iccd_full_profile_with_timeout(
                 continue
             payload = item
             break
+        if payload is None:
+            if process.exitcode == 0:
+                return
+            raise RuntimeError(f"extract_foundation_data worker exited with code {process.exitcode}")
         if payload.get("status") == "error":
             api_logger.error(
                 "extract_foundation_data: worker pid=%s failed: %s",
@@ -405,6 +411,14 @@ def _parse_bool(value: object, *, default: bool = False) -> bool:
         if normalized in {"0", "false", "f", "no", "n", "off", ""}:
             return False
     raise ValueError(f"invalid boolean value: {value}")
+
+
+def _parse_route_completion_mode(value: object) -> str:
+    mode = str(value or "full_route").strip() or "full_route"
+    if mode not in _ROUTE_COMPLETION_MODES:
+        allowed = ", ".join(sorted(_ROUTE_COMPLETION_MODES))
+        raise ValueError(f"route_completion_mode must be one of: {allowed}")
+    return mode
 
 
 def _parse_positive_float(value: object, name: str) -> float | None:
@@ -637,6 +651,15 @@ class ECCService:
     def _write_json(path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @classmethod
+    def _write_route_completion_mode(cls, workspace_dir: Path, route_completion_mode: str) -> None:
+        mode = _parse_route_completion_mode(route_completion_mode)
+        params_path = workspace_dir / "home" / "parameters.json"
+        params = cls._read_json(params_path)
+        if params.get("route_completion_mode") != mode:
+            params["route_completion_mode"] = mode
+            cls._write_json(params_path, params)
 
     @staticmethod
     def _redact_text(content: str) -> str:
@@ -930,12 +953,25 @@ class ECCService:
                 if target.exists() and target.is_file():
                     removed.append(str(target.relative_to(workspace_dir)))
                     target.unlink(missing_ok=True)
+            for relative_path in (
+                Path("data") / "rt" / "rt.log",
+                Path("data") / "rt" / "space_router" / "route_native_demand_capacity_final.jsonl",
+            ):
+                target = step_dir / relative_path
+                if target.exists() and target.is_file():
+                    removed.append(str(target.relative_to(workspace_dir)))
+                    target.unlink(missing_ok=True)
         return removed
 
     def _prepare_rerun_step_configs(
-        self, workspace_dir: Path, start_step: str, end_step: str | None = None
+        self,
+        workspace_dir: Path,
+        start_step: str,
+        end_step: str | None = None,
+        route_completion_mode: str = "full_route",
     ) -> list[str]:
         """Refresh config paths for the rerun slice after cloning or artifact cleanup."""
+        route_completion_mode = _parse_route_completion_mode(route_completion_mode)
         step_range = self._flow_step_range(workspace_dir, start_step, end_step)
         if step_range is None:
             return []
@@ -1028,7 +1064,12 @@ class ECCService:
             rt_config = config_dir / "rt_default_config.json"
             rt = self._read_json(rt_config)
             if rt:
-                rt.setdefault("RT", {})["-temp_directory_path"] = str(current_dir / "data" / "rt")
+                rt_section = rt.setdefault("RT", {})
+                rt_section["-temp_directory_path"] = str(current_dir / "data" / "rt")
+                if name == "route" and route_completion_mode == _SPACE_ROUTER_LABEL_MODE:
+                    rt_section["-stop_after_stage"] = "space_router"
+                elif "-stop_after_stage" in rt_section:
+                    rt_section.pop("-stop_after_stage", None)
                 self._write_json(rt_config, rt)
                 changed.add(str(rt_config.relative_to(workspace_dir)))
 
@@ -1138,6 +1179,9 @@ class ECCService:
                     ),
                     "scope": str(request.data.get("scope", "full")).strip() or "full",
                     "base_manifest_path": request.data.get("base_manifest_path"),
+                    "route_completion_mode": _parse_route_completion_mode(
+                        request.data.get("route_completion_mode", "full_route")
+                    ),
                 }
                 timeout_seconds = _parse_positive_float(
                     request.data.get("timeout_seconds"), "timeout_seconds"
@@ -1502,6 +1546,7 @@ class ECCService:
         timeout_seconds: float | None = None,
         stale_task_seconds: float | None = None,
         end_step: str | None = None,
+        route_completion_mode: str = "full_route",
     ) -> None:
         worker_start = time.monotonic()
 
@@ -1559,19 +1604,25 @@ class ECCService:
             pdk_root = service._refresh_workspace_pdk_root(workspace_dir)
             if end_step is None:
                 removed_artifacts = service._cleanup_stale_step_artifacts(workspace_dir, start_step)
-                rebuilt_configs = service._prepare_rerun_step_configs(workspace_dir, start_step)
+                rebuilt_configs = service._prepare_rerun_step_configs(
+                    workspace_dir, start_step, route_completion_mode=route_completion_mode
+                )
             else:
                 removed_artifacts = service._cleanup_stale_step_artifacts(
                     workspace_dir, start_step, end_step
                 )
                 rebuilt_configs = service._prepare_rerun_step_configs(
-                    workspace_dir, start_step, end_step
+                    workspace_dir,
+                    start_step,
+                    end_step,
+                    route_completion_mode=route_completion_mode,
                 )
             update(
                 cleaned_artifacts=removed_artifacts,
                 rebuilt_configs=rebuilt_configs,
                 pdk_root=pdk_root or "",
                 end_step=end_step or "",
+                route_completion_mode=route_completion_mode,
             )
             deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
             end_index = steps.index(end_step) if end_step is not None else len(steps) - 1
@@ -1602,7 +1653,11 @@ class ECCService:
                         message=[f"running {step}"],
                     ),
                 )
-                run_step_data = {"step": step, "rerun": rerun}
+                run_step_data = {
+                    "step": step,
+                    "rerun": rerun,
+                    "route_completion_mode": route_completion_mode,
+                }
                 if remaining_timeout is not None:
                     run_step_data["timeout_seconds"] = remaining_timeout
                 if stale_task_seconds is not None:
@@ -1656,6 +1711,9 @@ class ECCService:
                 request.data.get("stale_task_seconds"), "stale_task_seconds"
             )
             end_step = str(request.data.get("end_step") or "").strip() or None
+            route_completion_mode = _parse_route_completion_mode(
+                request.data.get("route_completion_mode", "full_route")
+            )
             task_id = uuid.uuid4().hex
             task = {
                 "task_id": task_id,
@@ -1666,6 +1724,7 @@ class ECCService:
                 "created_at": datetime.now(UTC).isoformat(),
                 "updated_at": datetime.now(UTC).isoformat(),
                 "error": "",
+                "route_completion_mode": route_completion_mode,
             }
             if timeout_seconds is not None:
                 task["timeout_seconds"] = timeout_seconds
@@ -1685,6 +1744,7 @@ class ECCService:
                     timeout_seconds,
                     stale_task_seconds,
                     end_step,
+                    route_completion_mode,
                 ),
                 daemon=True,
             )
@@ -2187,7 +2247,23 @@ class ECCService:
                 message=[str(exc)],
             )
 
-        response_data = {"step": step, "state": "Unstart"}
+        try:
+            route_completion_mode = _parse_route_completion_mode(
+                data.get("route_completion_mode", "full_route")
+            )
+        except ValueError as exc:
+            return ECCResponse(
+                cmd=request.cmd,
+                response=ResponseEnum.error.value,
+                data={"step": step, "state": "Unstart"},
+                message=[str(exc)],
+            )
+
+        response_data = {
+            "step": step,
+            "state": "Unstart",
+            "route_completion_mode": route_completion_mode,
+        }
         if timeout_seconds is not None:
             response_data["timeout_seconds"] = timeout_seconds
         if stale_seconds is not None:
@@ -2201,6 +2277,10 @@ class ECCService:
                 data=response_data,
                 message=[f"workspace not exist : {self.workspace.directory}"],
             )
+
+        self._write_route_completion_mode(Path(self.workspace.directory), route_completion_mode)
+        if getattr(getattr(self, "workspace", None), "parameters", None) is not None:
+            self.workspace.parameters.data["route_completion_mode"] = route_completion_mode
 
         # process cmd
         state = StateEnum.Unstart

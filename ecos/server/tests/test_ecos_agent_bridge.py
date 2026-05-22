@@ -1041,7 +1041,7 @@ def test_extract_foundation_data_timeout_terminates_worker(tmp_path: Path, monke
         exitcode = None
 
         def __init__(self, *, target, args) -> None:
-            self._alive_checks = 0
+            self._terminated = False
 
         def start(self) -> None:
             events.append("process.start")
@@ -1050,11 +1050,11 @@ def test_extract_foundation_data_timeout_terminates_worker(tmp_path: Path, monke
             events.append(f"process.join:{timeout}")
 
         def is_alive(self) -> bool:
-            self._alive_checks += 1
-            return self._alive_checks == 1
+            return not self._terminated
 
         def terminate(self) -> None:
             events.append("process.terminate")
+            self._terminated = True
 
         def kill(self) -> None:
             events.append("process.kill")
@@ -1335,7 +1335,12 @@ def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_p
 
     assert response.response == ResponseEnum.success.value
     manifest = response.data["manifest"]
-    assert manifest["options"] == {"stages": ["place"], "include_raw_refs": False, "export_legacy_debug": False}
+    assert manifest["options"] == {
+        "stages": ["place"],
+        "include_raw_refs": False,
+        "export_legacy_debug": False,
+        "route_completion_mode": "full_route",
+    }
     assert "raw_refs" not in manifest["artifacts"]
     assert [item["name"] for item in response.data["summary"]["flow"]["steps"]] == ["place"]
     assert not (ws / "foundation_data" / "ecc" / "raw_refs" / "artifacts.json").exists()
@@ -1353,6 +1358,7 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
         timeout_seconds=None,
         stale_task_seconds=None,
         end_step=None,
+        route_completion_mode="full_route",
     ):
         captured.update(
             {
@@ -1363,6 +1369,7 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
                 "timeout_seconds": timeout_seconds,
                 "stale_task_seconds": stale_task_seconds,
                 "end_step": end_step,
+                "route_completion_mode": route_completion_mode,
             }
         )
 
@@ -1390,6 +1397,7 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
                 "timeout_seconds": 5400,
                 "stale_task_seconds": 900,
                 "end_step": "route",
+                "route_completion_mode": "space_router_label",
             },
         )
     )
@@ -1401,9 +1409,66 @@ def test_run_from_step_forwards_timeout_seconds_to_worker(monkeypatch, tmp_path:
     assert captured["timeout_seconds"] == 5400.0
     assert captured["stale_task_seconds"] == 900.0
     assert captured["end_step"] == "route"
+    assert captured["route_completion_mode"] == "space_router_label"
     assert response.data["timeout_seconds"] == 5400.0
     assert response.data["stale_task_seconds"] == 900.0
     assert response.data["end_step"] == "route"
+    assert response.data["route_completion_mode"] == "space_router_label"
+
+
+def test_run_from_step_rejects_unknown_route_completion_mode(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    service = ECCService()
+
+    response = service.run_from_step(
+        ECCRequest(
+            cmd="run_from_step",
+            data={
+                "directory": str(ws),
+                "step": "place",
+                "route_completion_mode": "early_router",
+            },
+        )
+    )
+
+    assert response.response == ResponseEnum.error.value
+    assert "route_completion_mode" in response.message[0]
+
+
+def test_prepare_rerun_step_configs_writes_and_clears_space_router_stop_flag(tmp_path: Path):
+    target = tmp_path / "target"
+    route_dir = target / "route_ecc"
+    (target / "home").mkdir(parents=True)
+    (target / "origin").mkdir(parents=True)
+    (route_dir / "config").mkdir(parents=True)
+    (target / "home" / "flow.json").write_text(
+        json.dumps({"steps": [{"name": "route", "tool": "ecc", "state": "Success"}]}),
+        encoding="utf-8",
+    )
+    (target / "home" / "parameters.json").write_text(json.dumps({"Design": "gcd"}), encoding="utf-8")
+    (route_dir / "config" / "rt_default_config.json").write_text(
+        json.dumps({"RT": {"-thread_number": "50"}}),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    rebuilt = service._prepare_rerun_step_configs(
+        target, "route", route_completion_mode="space_router_label"
+    )
+
+    assert "route_ecc/config/rt_default_config.json" in rebuilt
+    rt_config = json.loads(
+        (route_dir / "config" / "rt_default_config.json").read_text(encoding="utf-8")
+    )
+    assert rt_config["RT"]["-stop_after_stage"] == "space_router"
+
+    rebuilt = service._prepare_rerun_step_configs(target, "route", route_completion_mode="full_route")
+
+    assert "route_ecc/config/rt_default_config.json" in rebuilt
+    rt_config = json.loads(
+        (route_dir / "config" / "rt_default_config.json").read_text(encoding="utf-8")
+    )
+    assert "-stop_after_stage" not in rt_config["RT"]
 
 
 def test_run_from_step_worker_stops_at_end_step_and_leaves_drc_filler_unrun(
@@ -1471,7 +1536,7 @@ def test_run_from_step_worker_stops_at_end_step_and_leaves_drc_filler_unrun(
         cleanup_args.append((start_step, end_step))
         return []
 
-    def fake_prepare(self, workspace_dir, start_step, end_step=None):
+    def fake_prepare(self, workspace_dir, start_step, end_step=None, route_completion_mode="full_route"):
         config_args.append((start_step, end_step))
         return []
 
@@ -1576,7 +1641,11 @@ def test_run_from_step_worker_fails_when_step_result_leaves_flow_ongoing(
     monkeypatch.setattr(ECCService, "load_workspace", fake_load_workspace)
     monkeypatch.setattr(ECCService, "_refresh_workspace_pdk_root", lambda self, workspace_dir: "")
     monkeypatch.setattr(ECCService, "_cleanup_stale_step_artifacts", lambda self, workspace_dir, step: [])
-    monkeypatch.setattr(ECCService, "_prepare_rerun_step_configs", lambda self, workspace_dir, step: [])
+    monkeypatch.setattr(
+        ECCService,
+        "_prepare_rerun_step_configs",
+        lambda self, workspace_dir, step, route_completion_mode="full_route": [],
+    )
     monkeypatch.setattr(ECCService, "run_step", fake_run_step)
     monkeypatch.setattr("ecos_server.ecc.services.ecc.gui_notify.notify_to", lambda *args, **kwargs: None)
 
@@ -1713,3 +1782,134 @@ def test_clone_workspace_skips_stale_foundation_data(tmp_path: Path):
 
     assert response.response == ResponseEnum.success.value
     assert not (target / "foundation_data").exists()
+
+
+def test_run_step_persists_route_completion_mode_for_builder(tmp_path: Path):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "ecc"))
+    ws = _workspace(tmp_path)
+    service = ECCService()
+    service.workspace = type("Workspace", (), {
+        "directory": str(ws),
+        "flow": type("Flow", (), {"data": {"steps": []}})(),
+        "parameters": type("Parameters", (), {"data": {}})(),
+    })()
+
+    class FakeEngineFlow:
+        def run_step(self, step, rerun, timeout_seconds=None, stale_seconds=None):
+            from chipcompiler.data import StateEnum
+            return StateEnum.Success
+
+    service.engine_flow = FakeEngineFlow()
+
+    response = service.run_step(
+        ECCRequest(
+            cmd="run_step",
+            data={"step": "route", "rerun": True, "route_completion_mode": "space_router_label"},
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    assert response.data["route_completion_mode"] == "space_router_label"
+    assert service.workspace.parameters.data["route_completion_mode"] == "space_router_label"
+    params = json.loads((ws / "home" / "parameters.json").read_text(encoding="utf-8"))
+    assert params["route_completion_mode"] == "space_router_label"
+
+
+def test_run_from_step_worker_forwards_route_completion_mode_to_run_step(
+    monkeypatch, tmp_path: Path
+):
+    ws = _workspace(tmp_path)
+    flow_path = ws / "home" / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"name": "place", "tool": "dreamplace", "state": "Success"},
+                    {"name": "route", "tool": "ecc", "state": "Success"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    task_id = "task-route-mode"
+    from ecos_server.ecc.services import ecc as ecc_module
+
+    with ecc_module._TASKS_LOCK:
+        ecc_module._TASKS[task_id] = {
+            "task_id": task_id,
+            "workspace": str(ws),
+            "status": "queued",
+        }
+
+    requests: list[dict] = []
+
+    def fake_load_workspace(self, request):
+        self.workspace = type("Workspace", (), {"directory": str(ws)})()
+        self.engine_flow = type(
+            "EngineFlow",
+            (),
+            {
+                "workspace_steps": [
+                    type("Step", (), {"name": name})()
+                    for name in ("place", "route")
+                ]
+            },
+        )()
+        return ECCResponse(
+            cmd="load_workspace",
+            response=ResponseEnum.success.value,
+            data={},
+            message=["load workspace success"],
+        )
+
+    def fake_run_step(self, request):
+        requests.append(dict(request.data))
+        return ECCResponse(
+            cmd="run_step",
+            response=ResponseEnum.success.value,
+            data={"step": request.data["step"], "state": "Success"},
+            message=[f"run step {request.data['step']} success"],
+        )
+
+    monkeypatch.setattr(ECCService, "load_workspace", fake_load_workspace)
+    monkeypatch.setattr(ECCService, "_refresh_workspace_pdk_root", lambda self, workspace_dir: "")
+    monkeypatch.setattr(ECCService, "_cleanup_stale_step_artifacts", lambda *args, **kwargs: [])
+    monkeypatch.setattr(ECCService, "_prepare_rerun_step_configs", lambda *args, **kwargs: [])
+    monkeypatch.setattr(ECCService, "run_step", fake_run_step)
+    monkeypatch.setattr("ecos_server.ecc.services.ecc.gui_notify.notify_to", lambda *args, **kwargs: None)
+
+    service = ECCService()
+    service._run_from_step_worker(
+        task_id,
+        ws,
+        "route",
+        True,
+        end_step="route",
+        route_completion_mode="space_router_label",
+    )
+
+    assert requests == [
+        {"step": "route", "rerun": True, "route_completion_mode": "space_router_label"}
+    ]
+
+
+def test_cleanup_stale_step_artifacts_removes_route_data_dir(tmp_path: Path):
+    ws = tmp_path / "ws"
+    route_dir = ws / "route_ecc"
+    (ws / "home").mkdir(parents=True)
+    (route_dir / "data" / "rt" / "space_router").mkdir(parents=True)
+    (route_dir / "output").mkdir(parents=True)
+    (ws / "home" / "flow.json").write_text(
+        json.dumps({"steps": [{"name": "route", "tool": "ecc", "state": "Success"}]}),
+        encoding="utf-8",
+    )
+    stale_label = route_dir / "data" / "rt" / "space_router" / "route_native_demand_capacity_final.jsonl"
+    stale_label.write_text("stale\n", encoding="utf-8")
+
+    removed = ECCService()._cleanup_stale_step_artifacts(ws, "route", "route")
+
+    assert "route_ecc/data/rt/space_router/route_native_demand_capacity_final.jsonl" in removed
+    assert not stale_label.exists()
+    assert (route_dir / "data" / "rt" / "space_router").is_dir()

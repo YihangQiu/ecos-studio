@@ -421,6 +421,14 @@ def _parse_route_completion_mode(value: object) -> str:
     return mode
 
 
+def _parse_route_detail_level(value: object) -> str:
+    route_detail_level = str(value or "full").strip() or "full"
+    allowed = {"full", "labels_only"}
+    if route_detail_level not in allowed:
+        raise ValueError("route_detail_level must be one of: " + ", ".join(sorted(allowed)))
+    return route_detail_level
+
+
 def _parse_positive_float(value: object, name: str) -> float | None:
     if value is None:
         return None
@@ -1181,6 +1189,12 @@ class ECCService:
                     "base_manifest_path": request.data.get("base_manifest_path"),
                     "route_completion_mode": _parse_route_completion_mode(
                         request.data.get("route_completion_mode", "full_route")
+                    ),
+                    "materialize_audit_tables": _parse_bool(
+                        request.data.get("materialize_audit_tables", True), default=True
+                    ),
+                    "route_detail_level": _parse_route_detail_level(
+                        request.data.get("route_detail_level", "full")
                     ),
                 }
                 timeout_seconds = _parse_positive_float(

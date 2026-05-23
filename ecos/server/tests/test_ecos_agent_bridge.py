@@ -1026,6 +1026,45 @@ def test_extract_foundation_data_forwards_base_delta_scope_options(tmp_path: Pat
     assert response.data["manifest"]["storage_layout"] == "base_delta_v1"
 
 
+def test_extract_foundation_data_forwards_perf_options(tmp_path: Path, monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _FakeExtractor:
+        def __init__(self, workspace_dir: Path, *, profile: str) -> None:
+            self.workspace_dir = Path(workspace_dir)
+            self.profile = profile
+
+        def extract(self, **kwargs):
+            from types import SimpleNamespace
+
+            captured.update(kwargs)
+            foundation_dir = self.workspace_dir / "foundation_data" / "ecc"
+            return SimpleNamespace(
+                foundation_dir=foundation_dir,
+                manifest={"tables": {}, "extraction_options": kwargs},
+                summary={"ok": True},
+            )
+
+    monkeypatch.setattr("ecos_server.ecc.services.ecc._foundation_extractor_class", lambda: _FakeExtractor)
+    ws = _workspace(tmp_path)
+    service = ECCService()
+
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={
+                "directory": str(ws),
+                "profile": "iccd_full_v1",
+                "materialize_audit_tables": "false",
+                "route_detail_level": "labels_only",
+            },
+        )
+    )
+
+    assert response.response == ResponseEnum.success.value
+    assert captured["materialize_audit_tables"] is False
+    assert captured["route_detail_level"] == "labels_only"
+
 def test_extract_foundation_data_timeout_terminates_worker(tmp_path: Path, monkeypatch):
     events: list[str] = []
 
@@ -1340,6 +1379,8 @@ def test_extract_foundation_data_forwards_stage_filter_and_raw_refs_option(tmp_p
         "include_raw_refs": False,
         "export_legacy_debug": False,
         "route_completion_mode": "full_route",
+        "materialize_audit_tables": True,
+        "route_detail_level": "full",
     }
     assert "raw_refs" not in manifest["artifacts"]
     assert [item["name"] for item in response.data["summary"]["flow"]["steps"]] == ["place"]

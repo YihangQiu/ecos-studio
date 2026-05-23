@@ -280,6 +280,7 @@ def _run_iccd_full_profile_with_timeout(
     profile: str,
     options: dict,
     timeout_seconds: float,
+    stale_seconds: float | None = None,
 ) -> None:
     mp_context = multiprocessing.get_context("spawn")
     result_queue = mp_context.Queue(maxsize=128)
@@ -289,10 +290,11 @@ def _run_iccd_full_profile_with_timeout(
     )
     api_logger.info(
         "extract_foundation_data: starting isolated worker "
-        "workspace=%s profile=%s timeout=%.1fs start_method=spawn",
+        "workspace=%s profile=%s timeout=%.1fs stale=%s start_method=spawn",
         workspace_dir,
         profile,
         timeout_seconds,
+        f"{stale_seconds:.1f}s" if stale_seconds is not None else "disabled",
     )
     try:
         process.start()
@@ -303,17 +305,30 @@ def _run_iccd_full_profile_with_timeout(
         )
         pending_payload = None
         deadline = time.monotonic() + timeout_seconds
+        last_progress_at = time.monotonic()
+        stale_timed_out = False
         while process.is_alive():
-            remaining = max(0.0, deadline - time.monotonic())
+            now = time.monotonic()
+            remaining = max(0.0, deadline - now)
+            stale_remaining = None
+            if stale_seconds is not None:
+                stale_remaining = max(0.0, stale_seconds - (now - last_progress_at))
             if remaining <= 0.0:
                 break
-            process.join(timeout=min(5.0, remaining))
+            if stale_remaining is not None and stale_remaining <= 0.0:
+                stale_timed_out = True
+                break
+            join_timeout = min(5.0, remaining)
+            if stale_remaining is not None:
+                join_timeout = min(join_timeout, stale_remaining)
+            process.join(timeout=join_timeout)
             while hasattr(result_queue, "get_nowait"):
                 try:
                     progress = result_queue.get_nowait()
                 except queue.Empty:
                     break
                 if progress.get("status") == "progress":
+                    last_progress_at = time.monotonic()
                     api_logger.info(
                         "extract_foundation_data: worker pid=%s progress %s",
                         process.pid,
@@ -323,11 +338,18 @@ def _run_iccd_full_profile_with_timeout(
                     pending_payload = progress
                     break
         if process.is_alive():
-            api_logger.warning(
-                "extract_foundation_data: worker pid=%s timed out after %.1fs; terminating",
-                process.pid,
-                timeout_seconds,
-            )
+            if stale_timed_out and stale_seconds is not None:
+                api_logger.warning(
+                    "extract_foundation_data: worker pid=%s stale timed out after %.1fs without progress; terminating",
+                    process.pid,
+                    stale_seconds,
+                )
+            else:
+                api_logger.warning(
+                    "extract_foundation_data: worker pid=%s timed out after %.1fs; terminating",
+                    process.pid,
+                    timeout_seconds,
+                )
             process.terminate()
             process.join(timeout=10.0)
             if process.is_alive():
@@ -337,6 +359,10 @@ def _run_iccd_full_profile_with_timeout(
                 )
                 process.kill()
                 process.join(timeout=5.0)
+            if stale_timed_out and stale_seconds is not None:
+                raise TimeoutError(
+                    f"extract_foundation_data stale timed out after {stale_seconds:.1f}s without progress"
+                )
             raise TimeoutError(f"extract_foundation_data timed out after {timeout_seconds:.1f}s")
         payload = pending_payload
         while hasattr(result_queue, "get_nowait"):
@@ -1200,6 +1226,9 @@ class ECCService:
                 timeout_seconds = _parse_positive_float(
                     request.data.get("timeout_seconds"), "timeout_seconds"
                 )
+                stale_seconds = _parse_positive_float(
+                    request.data.get("stale_seconds"), "stale_seconds"
+                )
                 start = time.monotonic()
                 if timeout_seconds is None:
                     extractor_cls = _foundation_extractor_class()
@@ -1213,6 +1242,7 @@ class ECCService:
                         profile,
                         extraction_options,
                         timeout_seconds,
+                        stale_seconds=stale_seconds,
                     )
                     manifest = self._read_json(self._manifest_path(workspace_dir))
                     summary = self._read_json(foundation_dir / "summary.json")
@@ -1229,6 +1259,8 @@ class ECCService:
                 }
                 if timeout_seconds is not None:
                     data["timeout_seconds"] = timeout_seconds
+                if stale_seconds is not None:
+                    data["stale_seconds"] = stale_seconds
             else:
                 payload = self._foundation_payload(workspace_dir)
                 sources = self._foundation_sources(workspace_dir)

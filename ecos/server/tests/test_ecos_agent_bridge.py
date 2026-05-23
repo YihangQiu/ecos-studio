@@ -1283,6 +1283,79 @@ def test_iccd_full_profile_timeout_forwards_worker_progress_logs(tmp_path: Path,
     )
 
 
+def test_iccd_full_profile_stale_timeout_terminates_worker_without_progress(tmp_path: Path, monkeypatch):
+    events: list[str] = []
+
+    class _FakeQueue:
+        def get_nowait(self):
+            raise ecc_service_module.queue.Empty
+
+        def close(self) -> None:
+            events.append("queue.close")
+
+        def join_thread(self) -> None:
+            events.append("queue.join_thread")
+
+    class _HangingProcess:
+        pid = 45678
+        exitcode = None
+
+        def __init__(self, *, target, args) -> None:
+            self._terminated = False
+
+        def start(self) -> None:
+            events.append("process.start")
+
+        def join(self, timeout=None) -> None:
+            events.append(f"process.join:{timeout}")
+
+        def is_alive(self) -> bool:
+            return not self._terminated
+
+        def terminate(self) -> None:
+            events.append("process.terminate")
+            self._terminated = True
+
+        def kill(self) -> None:
+            events.append("process.kill")
+
+    class _FakeContext:
+        def Queue(self, maxsize: int = 0):
+            return _FakeQueue()
+
+        def Process(self, *, target, args):
+            return _HangingProcess(target=target, args=args)
+
+    monkeypatch.setattr(
+        ecc_service_module.multiprocessing,
+        "get_context",
+        lambda method: _FakeContext(),
+    )
+    ws = _workspace(tmp_path)
+    service = ECCService()
+
+    start = time.monotonic()
+    response = service.extract_foundation_data(
+        ECCRequest(
+            cmd="extract_foundation_data",
+            data={
+                "directory": str(ws),
+                "profile": "iccd_full_v1",
+                "timeout_seconds": 60.0,
+                "stale_seconds": 0.1,
+            },
+        )
+    )
+    elapsed = time.monotonic() - start
+
+    assert response.response == ResponseEnum.error.value
+    assert "stale timed out" in response.message[0]
+    assert elapsed < 2.0
+    assert "process.terminate" in events
+    assert "process.kill" not in events
+    assert events[-2:] == ["queue.close", "queue.join_thread"]
+
+
 def test_foundation_bool_options_parse_explicit_false_strings(tmp_path: Path):
     ws = _workspace(tmp_path)
     service = ECCService()

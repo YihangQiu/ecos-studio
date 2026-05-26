@@ -959,6 +959,31 @@ class ECCService:
             return None
         return steps, start_index, end_index
 
+    def _reset_flow_step_states(
+        self, workspace_dir: Path, start_step: str, end_step: str | None = None
+    ) -> None:
+        flow_path = workspace_dir / "home" / "flow.json"
+        flow = self._read_json(flow_path)
+        step_range = self._flow_step_range(workspace_dir, start_step, end_step)
+        if step_range is None:
+            return
+        steps, start_index, end_index = step_range
+        for step in steps[start_index : end_index + 1]:
+            step["state"] = "Unstart"
+            step["runtime"] = ""
+            step["peak memory (mb)"] = 0
+            for key in (
+                "runtime_seconds",
+                "timeout_seconds",
+                "timed_out",
+                "stale_seconds",
+                "stale_timed_out",
+                "info",
+            ):
+                step.pop(key, None)
+        flow["steps"] = steps
+        self._write_json(flow_path, flow)
+
     def _cleanup_stale_step_artifacts(
         self, workspace_dir: Path, start_step: str, end_step: str | None = None
     ) -> list[str]:
@@ -968,6 +993,7 @@ class ECCService:
         generated artifacts that could otherwise make an old result look fresh.
         """
         removed: list[str] = []
+        self._reset_flow_step_states(workspace_dir, start_step, end_step)
         for step_dir in self._flow_step_dirs_from(workspace_dir, start_step, end_step):
             if not step_dir.exists() or not step_dir.is_dir():
                 continue

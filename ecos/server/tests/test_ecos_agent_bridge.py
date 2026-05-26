@@ -1585,6 +1585,41 @@ def test_prepare_rerun_step_configs_writes_and_clears_space_router_stop_flag(tmp
     assert "-stop_after_stage" not in rt_config["RT"]
 
 
+def test_cleanup_stale_step_artifacts_resets_flow_state_range(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    flow_path = ws / "home" / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"name": "place", "tool": "dreamplace", "state": "Incomplete", "runtime": "0:0:1", "runtime_seconds": 1.0},
+                    {"name": "CTS", "tool": "ecc", "state": "Success", "runtime": "0:0:2", "runtime_seconds": 2.0},
+                    {"name": "route", "tool": "ecc", "state": "Success", "runtime": "0:0:3", "runtime_seconds": 3.0},
+                    {"name": "drc", "tool": "ecc", "state": "Success", "runtime": "0:0:4", "runtime_seconds": 4.0},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    for step, tool in (("place", "dreamplace"), ("CTS", "ecc"), ("route", "ecc"), ("drc", "ecc")):
+        step_dir = ws / f"{step}_{tool}"
+        (step_dir / "output").mkdir(parents=True, exist_ok=True)
+        (step_dir / "output" / "old.def.gz").write_text("old", encoding="utf-8")
+
+    service = ECCService()
+    removed = service._cleanup_stale_step_artifacts(ws, "place", "route")
+    flow = json.loads(flow_path.read_text(encoding="utf-8"))
+    states = {step["name"]: step for step in flow["steps"]}
+
+    assert any(path.endswith("old.def.gz") for path in removed)
+    assert states["place"]["state"] == "Unstart"
+    assert states["CTS"]["state"] == "Unstart"
+    assert states["route"]["state"] == "Unstart"
+    assert states["drc"]["state"] == "Success"
+    assert "runtime_seconds" not in states["place"]
+    assert states["place"]["runtime"] == ""
+
+
 def test_run_from_step_worker_stops_at_end_step_and_leaves_drc_filler_unrun(
     monkeypatch, tmp_path: Path
 ):

@@ -2062,3 +2062,91 @@ def test_cleanup_stale_step_artifacts_removes_route_data_dir(tmp_path: Path):
     assert "route_ecc/data/rt/space_router/route_native_demand_capacity_final.jsonl" in removed
     assert not stale_label.exists()
     assert (route_dir / "data" / "rt" / "space_router").is_dir()
+
+
+def test_cleanup_stale_step_artifacts_clears_timeout_metadata(tmp_path: Path):
+    ws = _workspace(tmp_path)
+    flow_path = ws / "home" / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "name": "place",
+                        "tool": "dreamplace",
+                        "state": "Incomplete",
+                        "runtime": "0:0:1",
+                        "runtime_seconds": 1.0,
+                        "timeout_seconds": 0.001,
+                        "timed_out": True,
+                        "stale_seconds": 900,
+                        "stale_timed_out": True,
+                    },
+                    {"name": "route", "tool": "ecc", "state": "Success", "timeout_seconds": 44.0, "timed_out": True},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ECCService()
+    service._cleanup_stale_step_artifacts(ws, "place", "route")
+    flow = json.loads(flow_path.read_text(encoding="utf-8"))
+
+    for step in flow["steps"]:
+        assert step["state"] == "Unstart"
+        assert step["runtime"] == ""
+        assert "runtime_seconds" not in step
+        assert "timeout_seconds" not in step
+        assert "timed_out" not in step
+        assert "stale_seconds" not in step
+        assert "stale_timed_out" not in step
+
+
+def test_run_from_step_worker_refuses_too_small_remaining_timeout(monkeypatch, tmp_path: Path):
+    ws = _workspace(tmp_path)
+    task_id = "task-small-timeout"
+    from ecos_server.ecc.services import ecc as ecc_module
+
+    with ecc_module._TASKS_LOCK:
+        ecc_module._TASKS[task_id] = {
+            "task_id": task_id,
+            "workspace": str(ws),
+            "status": "queued",
+        }
+
+    def fake_load_workspace(self, request):
+        self.workspace = type("Workspace", (), {"directory": str(ws)})()
+        self.engine_flow = type(
+            "EngineFlow",
+            (),
+            {"workspace_steps": [type("Step", (), {"name": "place"})()]},
+        )()
+        return ECCResponse(cmd="load_workspace", response=ResponseEnum.success.value, data={}, message=[])
+
+    monkeypatch.setattr(ECCService, "load_workspace", fake_load_workspace)
+    monkeypatch.setattr(ECCService, "_refresh_workspace_pdk_root", lambda self, workspace_dir: "")
+    monkeypatch.setattr(
+        ECCService,
+        "_cleanup_stale_step_artifacts",
+        lambda self, workspace_dir, start_step, end_step=None: [],
+    )
+    monkeypatch.setattr(
+        ECCService,
+        "_prepare_rerun_step_configs",
+        lambda self, workspace_dir, start_step, end_step=None, route_completion_mode="full_route": [],
+    )
+    monkeypatch.setattr("ecos_server.ecc.services.ecc.gui_notify.notify_to", lambda *args, **kwargs: None)
+
+    def fail_run_step(self, request):
+        raise AssertionError("run_step should not be called with an exhausted timeout budget")
+
+    monkeypatch.setattr(ECCService, "run_step", fail_run_step)
+
+    service = ECCService()
+    service._run_from_step_worker(task_id, ws, "place", True, timeout_seconds=0.001)
+
+    task = {item["task_id"]: item for item in service._task_snapshot(ws)}[task_id]
+    assert task["status"] == "failed"
+    assert task["current_step"] == "place"
+    assert "remaining timeout" in task["error"]

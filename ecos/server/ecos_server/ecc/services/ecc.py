@@ -176,6 +176,7 @@ _RELOCATABLE_TEXT_SUFFIXES = {
     ".yml",
 }
 _RELOCATABLE_TEXT_LIMIT = 5 * 1024 * 1024
+_MIN_RUN_STEP_TIMEOUT_SECONDS = 1.0
 
 
 def _summarize_request(data: object) -> dict:
@@ -1702,11 +1703,14 @@ class ECCService:
                 remaining_timeout = None
                 if deadline is not None:
                     remaining_timeout = deadline - time.monotonic()
-                    if remaining_timeout <= 0:
+                    if remaining_timeout < _MIN_RUN_STEP_TIMEOUT_SECONDS:
                         update(
                             status="failed",
                             current_step=step,
-                            error=f"run_from_step timed out after {timeout_seconds:.1f}s",
+                            error=(
+                                f"run_from_step remaining timeout {max(0.0, remaining_timeout):.3f}s "
+                                f"is below minimum {_MIN_RUN_STEP_TIMEOUT_SECONDS:.1f}s before {step}"
+                            ),
                             runtime_seconds=runtime_seconds(),
                         )
                         return

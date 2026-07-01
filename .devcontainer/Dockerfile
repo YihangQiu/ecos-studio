@@ -75,7 +75,8 @@ ARG ECC_DREAMPLACE_WHEEL_URL="${GITHUB_RELEASE_BASE}/openecos-projects/ecc-dream
 ARG ECC_TOOLS_WHEEL_URL="${GITHUB_RELEASE_BASE}/openecos-projects/ecc-tools/releases/download/v0.1.0-alpha.2/ecc_tools-0.1.0a2-py3-none-manylinux_2_34_x86_64.whl"
 ARG OSS_CAD_SUITE_URL="${GITHUB_RELEASE_BASE}/YosysHQ/oss-cad-suite-build/releases/download/2026-01-22/oss-cad-suite-linux-x64-20260122.tgz"
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+RUN apt-get -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false install -y \
     curl \
     ca-certificates \
     python3 \
@@ -113,28 +114,37 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 WORKDIR /opt/ecc-flow
 
 RUN mkdir -p /tmp/ecc-dist \
+    && ECC_WHEEL_PATH="/tmp/ecc-dist/$(basename "${ECC_WHEEL_URL}")" \
+    && ECC_DREAMPLACE_WHEEL_PATH="/tmp/ecc-dist/$(basename "${ECC_DREAMPLACE_WHEEL_URL}")" \
+    && ECC_TOOLS_WHEEL_PATH="/tmp/ecc-dist/$(basename "${ECC_TOOLS_WHEEL_URL}")" \
     && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \
-        "${ECC_WHEEL_URL}" -o /tmp/ecc-dist/ecc.whl \
+        "${ECC_WHEEL_URL}" -o "${ECC_WHEEL_PATH}" \
     && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \
-        "${ECC_DREAMPLACE_WHEEL_URL}" -o /tmp/ecc-dist/ecc-dreamplace.whl \
+        "${ECC_DREAMPLACE_WHEEL_URL}" -o "${ECC_DREAMPLACE_WHEEL_PATH}" \
     && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \
-        "${ECC_TOOLS_WHEEL_URL}" -o /tmp/ecc-dist/ecc-tools.whl
+        "${ECC_TOOLS_WHEEL_URL}" -o "${ECC_TOOLS_WHEEL_PATH}" \
+    && printf 'ECC_WHEEL_PATH=%q\nECC_DREAMPLACE_WHEEL_PATH=%q\nECC_TOOLS_WHEEL_PATH=%q\n' \
+        "${ECC_WHEEL_PATH}" "${ECC_DREAMPLACE_WHEEL_PATH}" "${ECC_TOOLS_WHEEL_PATH}" \
+        > /tmp/ecc-wheel-paths.env
 
-RUN cat > /tmp/ecc-overrides.txt <<'EOF'
-ecc-dreamplace @ file:///tmp/ecc-dist/ecc-dreamplace.whl
-ecc-tools @ file:///tmp/ecc-dist/ecc-tools.whl
+RUN source /tmp/ecc-wheel-paths.env \
+    && cat > /tmp/ecc-overrides.txt <<EOF
+ecc-dreamplace @ file://${ECC_DREAMPLACE_WHEEL_PATH}
+ecc-tools @ file://${ECC_TOOLS_WHEEL_PATH}
 EOF
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv --python 3.11 /opt/ecc-flow/.venv \
+    source /tmp/ecc-wheel-paths.env \
+    && uv venv --python 3.11 /opt/ecc-flow/.venv \
     && uv pip install \
         --python /opt/ecc-flow/.venv/bin/python \
         --torch-backend cpu \
         --overrides /tmp/ecc-overrides.txt \
-        /tmp/ecc-dist/ecc.whl
+        "${ECC_WHEEL_PATH}"
 
 RUN mkdir -p /opt/oss-cad-suite \
-    && curl -L "${OSS_CAD_SUITE_URL}" | tar -xz -C /opt/oss-cad-suite --strip-components=1 \
+    && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \
+        "${OSS_CAD_SUITE_URL}" | tar -xz -C /opt/oss-cad-suite --strip-components=1 \
     && test -x /opt/oss-cad-suite/bin/yosys
 
 RUN cat > /etc/profile.d/oss-cad-suite.sh <<'EOF'

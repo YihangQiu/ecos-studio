@@ -5,7 +5,7 @@ BUNDLE_EXTRACT_DIR := /tmp/ecos-studio-bundle
 APPIMAGE_MARKER := $(BUNDLE_EXTRACT_DIR)/.extracted
 
 PDK_ROOT ?= ./pdk/icsprout55-pdk
-ECC_CLI ?= ./eda/ecc\#cli
+ECC_CLI ?= ./ecc\#cli
 GCD_WS ?= ./ws/gcd
 SOC_WS ?= ./ws/soc
 RETROSOC_WS ?= ./ws/retrosoc
@@ -141,7 +141,7 @@ clean:
 
 demo-gcd: check-setup
 	nix run $(ECC_CLI) -- --workspace $(GCD_WS) \
-		--rtl ./eda/ecc/docs/examples/gcd/gcd.v \
+		--rtl ./ecc/docs/examples/gcd/gcd.v \
 		--design gcd --top gcd --clock clk \
 		--pdk-root $(PDK_ROOT)
 

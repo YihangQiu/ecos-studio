@@ -66,32 +66,87 @@ ENV PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr
 
 FROM base AS devcontainer
 
-FROM base AS runtime
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae AS runtime
+SHELL ["/bin/bash", "-lc"]
 
-WORKDIR /workspace
-COPY . /workspace
+ARG OSS_CAD_SUITE_URL="https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-01-22/oss-cad-suite-linux-x64-20260122.tgz"
 
-# Init submodules (ip/, eda/, pdk/)
-RUN git submodule update --init --recursive || true
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    curl \
+    ca-certificates \
+    python3 \
+    python3-venv \
+    python3-pip \
+    jq \
+    libdbus-1-3 \
+    libfontconfig1 \
+    libgl1 \
+    libglib2.0-0 \
+    libice6 \
+    libsm6 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb-cursor0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-shm0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-xinerama0 \
+    libxcb-xkb1 \
+    libxcb1 \
+    libxkbcommon-x11-0 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install ecos/server dependencies (includes ecc wheel)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -s /root/.local/bin/uv /usr/local/bin/uv
+
+WORKDIR /opt/ecc-flow
+
+RUN cat > /tmp/ecc-overrides.txt <<'EOF'
+ecc-dreamplace @ https://github.com/openecos-projects/ecc-dreamplace/releases/download/v0.1.0-alpha.2/ecc_dreamplace-0.1.0a2-py3-none-manylinux_2_34_x86_64.whl
+ecc-tools @ https://github.com/openecos-projects/ecc-tools/releases/download/v0.1.0-alpha.2/ecc_tools-0.1.0a2-py3-none-manylinux_2_34_x86_64.whl
+EOF
+
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    cd ecos/server && rm -rf .venv \
-    && uv sync --frozen --all-groups --python 3.11
+    uv venv --python 3.11 /opt/ecc-flow/.venv \
+    && uv pip install \
+        --python /opt/ecc-flow/.venv/bin/python \
+        --torch-backend cpu \
+        --overrides /tmp/ecc-overrides.txt \
+        "ecc @ https://github.com/openecos-projects/ecc/releases/download/v0.1.0-alpha.2/ecc-0.1.0a2-py3-none-any.whl"
 
-# Install GUI frontend dependencies
-RUN cd ecos/gui && pnpm install --frozen-lockfile
+RUN mkdir -p /opt/oss-cad-suite \
+    && curl -L "${OSS_CAD_SUITE_URL}" | tar -xz -C /opt/oss-cad-suite --strip-components=1 \
+    && test -x /opt/oss-cad-suite/bin/yosys
 
-ENV VIRTUAL_ENV="/workspace/ecos/server/.venv"
-ENV PATH="/workspace/ecos/server/.venv/bin:${PATH}"
-ENV CHIPCOMPILER_OSS_CAD_DIR="/workspace/eda/oss-cad-suite"
-ENV CHIPCOMPILER_ICS55_PDK_ROOT="/workspace/pdk/icsprout55-pdk"
-RUN echo 'if [ -f /workspace/ecos/server/.venv/bin/activate ]; then source /workspace/ecos/server/.venv/bin/activate; fi' >> /root/.bashrc
+RUN cat > /etc/profile.d/oss-cad-suite.sh <<'EOF'
+if [ -f /opt/oss-cad-suite/environment ]; then
+  . /opt/oss-cad-suite/environment >/dev/null 2>&1 || true
+fi
+EOF
+
+ENV VIRTUAL_ENV="/opt/ecc-flow/.venv"
+ENV PATH="/opt/ecc-flow/.venv/bin:/opt/oss-cad-suite/bin:${PATH}"
+ENV CHIPCOMPILER_OSS_CAD_DIR="/opt/oss-cad-suite"
+ENV CHIPCOMPILER_ICS55_PDK_ROOT="/pdk"
+ENV UV_LINK_MODE="copy"
+
+WORKDIR /work
+
+RUN python3 --version \
+    && uv --version \
+    && cli --help >/dev/null \
+    && bash -lc 'source /opt/oss-cad-suite/environment && yosys -p "plugin -i slang" >/tmp/yosys-slang.log' \
+    && rm -f /tmp/yosys-slang.log
 
 
 # Build commands:
 # docker build --target runtime -f .devcontainer/Dockerfile -t ecos-studio:latest .
 # docker build --target devcontainer -f .devcontainer/Dockerfile -t ecos-studio-dev .
+CMD ["bash"]

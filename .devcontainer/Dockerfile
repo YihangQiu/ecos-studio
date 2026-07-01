@@ -69,7 +69,11 @@ FROM base AS devcontainer
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae AS runtime
 SHELL ["/bin/bash", "-lc"]
 
-ARG OSS_CAD_SUITE_URL="https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-01-22/oss-cad-suite-linux-x64-20260122.tgz"
+ARG GITHUB_RELEASE_BASE="https://github.com"
+ARG ECC_WHEEL_URL="${GITHUB_RELEASE_BASE}/openecos-projects/ecc/releases/download/v0.1.0-alpha.2/ecc-0.1.0a2-py3-none-any.whl"
+ARG ECC_DREAMPLACE_WHEEL_URL="${GITHUB_RELEASE_BASE}/openecos-projects/ecc-dreamplace/releases/download/v0.1.0-alpha.2/ecc_dreamplace-0.1.0a2-py3-none-manylinux_2_34_x86_64.whl"
+ARG ECC_TOOLS_WHEEL_URL="${GITHUB_RELEASE_BASE}/openecos-projects/ecc-tools/releases/download/v0.1.0-alpha.2/ecc_tools-0.1.0a2-py3-none-manylinux_2_34_x86_64.whl"
+ARG OSS_CAD_SUITE_URL="${GITHUB_RELEASE_BASE}/YosysHQ/oss-cad-suite-build/releases/download/2026-01-22/oss-cad-suite-linux-x64-20260122.tgz"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
@@ -108,9 +112,17 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 
 WORKDIR /opt/ecc-flow
 
+RUN mkdir -p /tmp/ecc-dist \
+    && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \
+        "${ECC_WHEEL_URL}" -o /tmp/ecc-dist/ecc.whl \
+    && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \
+        "${ECC_DREAMPLACE_WHEEL_URL}" -o /tmp/ecc-dist/ecc-dreamplace.whl \
+    && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \
+        "${ECC_TOOLS_WHEEL_URL}" -o /tmp/ecc-dist/ecc-tools.whl
+
 RUN cat > /tmp/ecc-overrides.txt <<'EOF'
-ecc-dreamplace @ https://github.com/openecos-projects/ecc-dreamplace/releases/download/v0.1.0-alpha.2/ecc_dreamplace-0.1.0a2-py3-none-manylinux_2_34_x86_64.whl
-ecc-tools @ https://github.com/openecos-projects/ecc-tools/releases/download/v0.1.0-alpha.2/ecc_tools-0.1.0a2-py3-none-manylinux_2_34_x86_64.whl
+ecc-dreamplace @ file:///tmp/ecc-dist/ecc-dreamplace.whl
+ecc-tools @ file:///tmp/ecc-dist/ecc-tools.whl
 EOF
 
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -119,7 +131,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         --python /opt/ecc-flow/.venv/bin/python \
         --torch-backend cpu \
         --overrides /tmp/ecc-overrides.txt \
-        "ecc @ https://github.com/openecos-projects/ecc/releases/download/v0.1.0-alpha.2/ecc-0.1.0a2-py3-none-any.whl"
+        /tmp/ecc-dist/ecc.whl
 
 RUN mkdir -p /opt/oss-cad-suite \
     && curl -L "${OSS_CAD_SUITE_URL}" | tar -xz -C /opt/oss-cad-suite --strip-components=1 \

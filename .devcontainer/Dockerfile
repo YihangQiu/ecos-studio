@@ -113,6 +113,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 
 WORKDIR /opt/ecc-flow
 
+RUN apt-get -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false install -y \
+    libcairo2 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /tmp/ecc-dist \
     && ECC_WHEEL_PATH="/tmp/ecc-dist/$(basename "${ECC_WHEEL_URL}")" \
     && ECC_DREAMPLACE_WHEEL_PATH="/tmp/ecc-dist/$(basename "${ECC_DREAMPLACE_WHEEL_URL}")" \
@@ -141,6 +146,44 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         --torch-backend cpu \
         --overrides /tmp/ecc-overrides.txt \
         "${ECC_WHEEL_PATH}"
+
+COPY ecc/chipcompiler/thirdparty/ecc-dreamplace/thirdparty/flute/lut.ICCAD2015 \
+    /tmp/ecc-runtime-assets/flute/lut.ICCAD2015
+COPY ecc/chipcompiler/thirdparty/ecc-dreamplace/thirdparty/NCTUgr.ICCAD2012 \
+    /tmp/ecc-runtime-assets/NCTUgr.ICCAD2012
+
+RUN /opt/ecc-flow/.venv/bin/python - <<'PY'
+import json
+import shutil
+import site
+from pathlib import Path
+
+site_packages = Path(site.getsitepackages()[0])
+thirdparty_root = site_packages / "thirdparty"
+thirdparty_root.mkdir(parents=True, exist_ok=True)
+
+shutil.copytree(
+    Path("/tmp/ecc-runtime-assets/flute/lut.ICCAD2015"),
+    thirdparty_root / "flute" / "lut.ICCAD2015",
+    dirs_exist_ok=True,
+)
+shutil.copytree(
+    Path("/tmp/ecc-runtime-assets/NCTUgr.ICCAD2012"),
+    thirdparty_root / "NCTUgr.ICCAD2012",
+    dirs_exist_ok=True,
+)
+
+config_path = Path(
+    site_packages / "chipcompiler/tools/ecc_dreamplace/configs/dreamplace.json"
+)
+config = json.loads(config_path.read_text())
+config["routability_opt_flag"] = 0
+config_path.write_text(json.dumps(config, indent=4) + "\n")
+
+assert (thirdparty_root / "flute/lut.ICCAD2015/POWV9.dat").is_file()
+assert (thirdparty_root / "NCTUgr.ICCAD2012/NCTUgr").is_file()
+assert json.loads(config_path.read_text())["routability_opt_flag"] == 0
+PY
 
 RUN mkdir -p /opt/oss-cad-suite \
     && curl -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 1800 \

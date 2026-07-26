@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { createEccCliRuntimeEnv } from './eccCliRuntime'
+import { createEccRuntimeEnv } from './eccRpc/runtimeEnv'
 import { LayoutViewerService } from './layoutViewerService'
 
 describe('development wrappers', () => {
@@ -27,7 +27,7 @@ describe('development wrappers', () => {
     writeFileSync(layoutPackerWrapperPath, '#!/usr/bin/env bash\n')
     writeFileSync(layoutViewerWrapperPath, '#!/usr/bin/env bash\n')
 
-    const env = createEccCliRuntimeEnv({
+    const env = createEccRuntimeEnv({
       appPath,
       cwd: appPath,
       env: {

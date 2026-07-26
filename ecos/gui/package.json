@@ -7,7 +7,7 @@
   "scripts": {
     "check": "pnpm run typecheck && pnpm run lint && pnpm run fmt:check && pnpm run test",
     "dev": "pnpm run desktop:dev",
-    "dev:vm": "LIBGL_ALWAYS_SOFTWARE=1 ELECTRON_DISABLE_SANDBOX=1 ECOS_ELECTRON_DISABLE_GPU=1 ECOS_ELECTRON_OPEN_DEVTOOLS=1 pnpm run desktop:dev",
+    "dev:vm": "LIBGL_ALWAYS_SOFTWARE=1 ELECTRON_DISABLE_SANDBOX=1 ECOS_ELECTRON_DISABLE_GPU=1 ECOS_ELECTRON_OPEN_DEVTOOLS=1 CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=500 UV_NO_SYNC=1 SKBUILD_EDITABLE_SKIP=../../ecc/chipcompiler/thirdparty/ecc-dreamplace/build:../../ecc/chipcompiler/thirdparty/ecc-tools/build pnpm run desktop:dev",
     "build": "pnpm --filter @ecos-studio/renderer run typecheck && pnpm run desktop:build",
     "preview": "pnpm run desktop:preview",
     "doctor": "node scripts/doctor.mjs",

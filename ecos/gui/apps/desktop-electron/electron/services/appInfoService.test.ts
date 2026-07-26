@@ -60,7 +60,7 @@ describe('AppInfoService', () => {
       ecc: '0.1.0a5',
       eccTools: '0.1.0a2',
       gui: '0.1.0-alpha.6',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
     })
   })
 
@@ -88,7 +88,7 @@ describe('AppInfoService', () => {
       dreamplace: 'unknown',
       ecc: '0.1.0a5',
       eccTools: 'unknown',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
     })
   })
 
@@ -115,7 +115,7 @@ describe('AppInfoService', () => {
 
     await expect(promise).resolves.toMatchObject({
       ecc: '0.1.0a5',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
     })
   })
 
@@ -142,7 +142,7 @@ describe('AppInfoService', () => {
 
     await expect(promise).resolves.toMatchObject({
       ecc: '0.1.0a5',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
     })
   })
 
@@ -168,7 +168,7 @@ describe('AppInfoService', () => {
       ecc: '0.1.0a5',
       eccTools: 'unknown',
       gui: '0.1.0-alpha.6',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
     })
   })
 
@@ -188,7 +188,7 @@ describe('AppInfoService', () => {
       dreamplace: 'unknown',
       ecc: 'unknown',
       eccTools: 'unknown',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
     })
   })
 })

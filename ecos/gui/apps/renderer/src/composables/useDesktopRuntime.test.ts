@@ -52,7 +52,7 @@ const desktopBridge = {
   app: {
     getVersions: async () => ({
       gui: '0.1.0-alpha.4',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
       ecc: 'unknown',
       dreamplace: 'unknown',
     }),
@@ -62,6 +62,7 @@ const desktopBridge = {
     toggleMaximize: async () => undefined,
     close: async () => undefined,
     confirmClose: async () => undefined,
+    create: async () => undefined,
     setTitle: async (_title: string) => undefined,
     isMaximized: async () => false,
     onCloseRequested: () => () => undefined,
@@ -70,6 +71,7 @@ const desktopBridge = {
   },
   menu: {
     onAction: () => () => undefined,
+    setActionEnabled: async () => undefined,
   },
   system: {
     openExternal: async (_url: string) => undefined,
@@ -84,12 +86,20 @@ const desktopBridge = {
     readTextFile: async () => '',
     readJsonFile: async <T = unknown>() => null as T,
   },
+  projectManifest: {
+    mutate: async () => ({ content: '' }),
+  },
   dialog: {
     pickDirectory: async () => null,
     pickFiles: async () => null,
     pickRtlSources: async () => null,
+    saveFile: async () => null,
   },
   workspace: {
+    openOrFocus: async () => ({ action: 'proceed' as const }),
+    bindWindow: async (path: string) => path,
+    unbindWindow: async () => undefined,
+    getBoundPath: async () => null,
     isProjectDirectory: async () => false,
     registerProjectRoot: async (path: string) => path,
     clearProjectRoot: async () => undefined,
@@ -99,6 +109,11 @@ const desktopBridge = {
     readProjectTextFileTail: async () => null,
     readProjectBinaryFile: async () => new Uint8Array(),
     writeProjectTextFile: async () => undefined,
+    listProjectDirectory: async () => [],
+    prepareProjectDirectoryReplacement: async () => null,
+    restoreProjectDirectoryReplacement: async () => undefined,
+    finalizeProjectDirectoryReplacement: async () => undefined,
+    retainProjectDirectoryReplacement: async () => undefined,
     scanPdkDirectory: async () => ({
       canonicalPath: '',
       name: '',
@@ -183,15 +198,42 @@ const desktopBridge = {
     refreshRegistry: async () => ({ status: 'refreshed', tools_count: 0 }),
     onProgress: () => () => undefined,
   },
-  cli: {
-    execute: async (request) => ({
-      cmd: request.cmd,
-      data: {},
-      message: [],
-      ok: true,
-      response: 'success',
-    }),
-    onEvent: () => () => undefined,
+  ecc: {
+    events: {
+      onEvent: () => () => undefined,
+    },
+    flow: {
+      run: async (request) => ({ rerun: Boolean(request.rerun) }),
+      runStep: async (request) => ({ state: 'Success', step: request.step }),
+    },
+    rpc: {
+      hello: async () => ({ capabilities: [], eccVersion: 'unknown', version: 1 }),
+      ping: async () => ({ ok: true }),
+      shutdown: async () => ({ ok: true }),
+    },
+    workspace: {
+      close: async () => ({ ok: true }),
+      create: async (request) => ({
+        directory: request.directory,
+        workspaceHandle: 'workspace-handle-1',
+      }),
+      exportSignoff: async (request) => ({ outputPath: request.outputPath }),
+      inspectSignoff: async () => ({ groups: [], risks: [], status: 'ready' as const }),
+      home: async () => ({ path: '' }),
+      info: async (request) => ({ id: request.id, info: {}, step: request.step }),
+      open: async (request) => ({
+        directory: request.directory,
+        workspaceHandle: 'workspace-handle-1',
+      }),
+      refreshConfig: async () => ({ directory: '', refreshed: true }),
+      resetFlow: async () => ({ directory: '' }),
+      syncConfig: async (request) => ({
+        configPath: request.configPath,
+        directory: '',
+        parametersChanged: false,
+        refreshed: true,
+      }),
+    },
   },
   shell: {
     createSession: async () => ({

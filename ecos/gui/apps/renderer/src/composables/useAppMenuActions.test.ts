@@ -21,8 +21,11 @@ describe('useAppMenuActions', () => {
       | Partial<
           Record<
             | typeof appMenuActionIds.documentation
+            | typeof appMenuActionIds.newWindow
             | typeof appMenuActionIds.newProject
             | typeof appMenuActionIds.openProject
+            | typeof appMenuActionIds.reconfigureWorkspace
+            | typeof appMenuActionIds.exportSignoffPackage
             | typeof appMenuActionIds.about,
             () => void
           >
@@ -34,21 +37,32 @@ describe('useAppMenuActions', () => {
     })
 
     const showNewProjectWizard = vi.fn()
+    const createWindow = vi.fn().mockResolvedValue(undefined)
     const openProject = vi.fn().mockResolvedValue(true)
     const openDocumentation = vi.fn().mockResolvedValue(undefined)
     const navigateToWorkspace = vi.fn()
     const showAboutDialog = vi.fn()
+    const reconfigureWorkspace = vi.fn()
+    const exportSignoffPackage = vi.fn()
 
     const { handleMenuAction } = useAppMenuActions({
+      createWindow,
       navigateToWorkspace,
       openDocumentation,
       openProject,
+      reconfigureWorkspace,
+      exportSignoffPackage,
       showAboutDialog,
       showNewProjectWizard,
     })
 
     expect(useMenuEvents).toHaveBeenCalledTimes(1)
     expect(registeredHandlers).toBeDefined()
+
+    registeredHandlers?.[appMenuActionIds.newWindow]?.()
+    await Promise.resolve()
+
+    expect(createWindow).toHaveBeenCalledTimes(1)
 
     registeredHandlers?.[appMenuActionIds.newProject]?.()
     await Promise.resolve()
@@ -60,6 +74,16 @@ describe('useAppMenuActions', () => {
 
     expect(openProject).toHaveBeenCalledTimes(1)
     expect(navigateToWorkspace).toHaveBeenCalledTimes(1)
+
+    registeredHandlers?.[appMenuActionIds.reconfigureWorkspace]?.()
+    await Promise.resolve()
+
+    expect(reconfigureWorkspace).toHaveBeenCalledTimes(1)
+
+    registeredHandlers?.[appMenuActionIds.exportSignoffPackage]?.()
+    await Promise.resolve()
+
+    expect(exportSignoffPackage).toHaveBeenCalledTimes(1)
 
     registeredHandlers?.[appMenuActionIds.documentation]?.()
     await Promise.resolve()
@@ -79,6 +103,14 @@ describe('useAppMenuActions', () => {
 
     expect(openProject).toHaveBeenCalledTimes(2)
     expect(navigateToWorkspace).toHaveBeenCalledTimes(2)
+
+    await handleMenuAction(appMenuActionIds.reconfigureWorkspace)
+
+    expect(reconfigureWorkspace).toHaveBeenCalledTimes(2)
+
+    await handleMenuAction(appMenuActionIds.exportSignoffPackage)
+
+    expect(exportSignoffPackage).toHaveBeenCalledTimes(2)
   })
 
   it('does not navigate when opening a project is cancelled', async () => {

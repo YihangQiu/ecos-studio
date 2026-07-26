@@ -6,19 +6,31 @@ import {
   type IpcMain,
   type IpcMainInvokeEvent,
 } from 'electron'
-import { stat } from 'node:fs/promises'
+import { mkdir, stat } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import {
   desktopApiEventChannels,
   desktopApiIpcChannels,
-  type DesktopCliCommandEvent,
-  type DesktopCliCommandRequest,
-  type DesktopCliCommandResult,
   type DesktopProjectFileChangedEvent,
   type DesktopProjectLogTailEvent,
+  type DesktopProjectDirectoryEntry,
   type DesktopDirectoryDialogOptions,
+  type EccFlowRunRequest,
+  type EccFlowRunStepRequest,
+  type EccRuntimeEvent,
+  type EccWorkspaceCreateRequest,
+  type EccWorkspaceExportSignoffRequest,
+  type EccWorkspaceHandleRequest,
+  type EccWorkspaceInfoRequest,
+  type EccWorkspaceOpenRequest,
+  type EccWorkspaceSyncConfigRequest,
   type DesktopFileDialogOptions,
+  type DesktopMenuEventId,
+  type DesktopSaveFileDialogOptions,
   type DesktopRtlSourceDialogOptions,
   type PickedRtlSources,
+  type ProjectManifestMutationRequest,
+  type ProjectManifestMutationResult,
   type DesktopProjectTextFileTail,
   type DesktopProjectTextFileUpdate,
   type DesktopSettingsValue,
@@ -39,6 +51,8 @@ import {
   type ScannedPdkDirectory,
   type ScannedRtlDirectory,
   type VersionInfo,
+  type WorkspaceDirectoryReplacement,
+  type WorkspaceOpenOrFocusResult,
   type WorkspaceResourceIndex,
   type WorkspaceStepInfoRequest,
   type WorkspaceStepInfoResult,
@@ -52,6 +66,13 @@ import {
   toggleMaximizeWindow,
 } from '../services/windowService'
 import { electronLogger } from '../services/logger'
+import { setMenuActionEnabled } from '../services/menuService'
+import { runWithWindowScope } from '../services/windowScopeContext'
+import { normalizeWorkspacePath } from '../services/workspacePath'
+import {
+  workspaceWindowRegistry,
+  type WorkspaceWindowLike,
+} from '../services/workspaceWindowRegistry'
 
 export type IpcMainLike = Pick<IpcMain, 'handle'>
 
@@ -66,10 +87,15 @@ interface DesktopBridgeErrorResult {
   ok: false
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 export interface DesktopBridgeServices {
   appInfoService: {
     getVersions(): Promise<VersionInfo>
   }
+  createWindow?(options?: { initialRoute?: string }): Promise<void>
   settingsStore: {
     delete(key: string): Promise<void>
     get<T extends DesktopSettingsValue = DesktopSettingsValue>(
@@ -81,6 +107,11 @@ export interface DesktopBridgeServices {
     listFiles(request: RemoteContentListFilesRequest): Promise<RemoteContentFile[]>
     readTextFile(request: RemoteContentReadTextFileRequest): Promise<string>
     readJsonFile<T = unknown>(request: RemoteContentReadJsonFileRequest): Promise<T>
+  }
+  projectManifestService: {
+    mutate(
+      request: ProjectManifestMutationRequest,
+    ): Promise<ProjectManifestMutationResult>
   }
   workspaceService: {
     clearProjectRoot(): Promise<void>
@@ -118,6 +149,12 @@ export interface DesktopBridgeServices {
     removeDesignFile(
       filelistEntry: string,
     ): Promise<import('@ecos-studio/shared').WorkspaceDesignFileEntry | null>
+    prepareProjectDirectoryReplacement(
+      path: string,
+    ): Promise<WorkspaceDirectoryReplacement | null>
+    restoreProjectDirectoryReplacement(replacementId: string): Promise<void>
+    finalizeProjectDirectoryReplacement(replacementId: string): Promise<void>
+    retainProjectDirectoryReplacement(replacementId: string): Promise<void>
     unwatchProjectFile(subscriptionId: string): Promise<void>
     unsubscribeProjectLogTail(subscriptionId: string): Promise<void>
     watchProjectFile(
@@ -125,6 +162,7 @@ export interface DesktopBridgeServices {
       listener: (event: DesktopProjectFileChangedEvent) => void,
     ): Promise<string>
     writeProjectTextFile(path: string, content: string): Promise<void>
+    listProjectDirectory(path: string): Promise<DesktopProjectDirectoryEntry[]>
   }
   layoutViewerService: {
     open(request: LayoutViewerOpenRequest): Promise<LayoutViewerOpenResult>
@@ -157,11 +195,23 @@ export interface DesktopBridgeServices {
     importLocalPath(resourceId: string, path: string): Promise<unknown>
     refreshRegistry(): Promise<unknown>
   }
-  desktopRuntimeManager: {
-    execute(
-      request: DesktopCliCommandRequest,
-      listener?: (event: DesktopCliCommandEvent) => void,
-    ): Promise<DesktopCliCommandResult>
+  eccRuntimeService: {
+    closeWorkspace(request: EccWorkspaceHandleRequest): Promise<unknown>
+    createWorkspace(request: EccWorkspaceCreateRequest): Promise<unknown>
+    exportSignoff(request: EccWorkspaceExportSignoffRequest): Promise<unknown>
+    inspectSignoff(request: EccWorkspaceHandleRequest): Promise<unknown>
+    onEvent(listener: (event: EccRuntimeEvent) => void): () => void
+    openWorkspace(request: EccWorkspaceOpenRequest): Promise<unknown>
+    refreshConfig(request: EccWorkspaceHandleRequest): Promise<unknown>
+    resetFlow(request: EccWorkspaceHandleRequest): Promise<unknown>
+    rpcHello(): Promise<unknown>
+    rpcPing(): Promise<unknown>
+    rpcShutdown(): Promise<unknown>
+    runFlow(request: EccFlowRunRequest): Promise<unknown>
+    runStep(request: EccFlowRunStepRequest): Promise<unknown>
+    syncConfig(request: EccWorkspaceSyncConfigRequest): Promise<unknown>
+    workspaceHome(request: EccWorkspaceHandleRequest): Promise<unknown>
+    workspaceInfo(request: EccWorkspaceInfoRequest): Promise<unknown>
   }
   shellService: {
     createSession(
@@ -244,16 +294,60 @@ function summarizeIpcError(channel: string, args: unknown[], error: unknown): st
 
 function wrapIpcHandler(channel: string, handler: IpcHandler): IpcHandler {
   return async (event, ...args): Promise<unknown | DesktopBridgeErrorResult> => {
-    try {
-      return await handler(event, ...args)
-    } catch (error) {
-      electronLogger.warn(summarizeIpcError(channel, args, error), error)
-      return {
-        error: serializeError(error),
-        ok: false,
+    const windowId = typeof event?.sender?.id === 'number' ? event.sender.id : undefined
+    const run = async (): Promise<unknown | DesktopBridgeErrorResult> => {
+      try {
+        return await handler(event, ...args)
+      } catch (error) {
+        electronLogger.warn(summarizeIpcError(channel, args, error), error)
+        return {
+          error: serializeError(error),
+          ok: false,
+        }
       }
     }
+    if (windowId === undefined) {
+      return await run()
+    }
+    return await runWithWindowScope(windowId, run)
   }
+}
+
+function readWorkspaceHandleFromEvent(event: EccRuntimeEvent): string | undefined {
+  if (!('workspaceHandle' in event)) return undefined
+  const handle = event.workspaceHandle
+  return typeof handle === 'string' && handle ? handle : undefined
+}
+
+function readWorkspaceDirectoryFromEvent(event: EccRuntimeEvent): string | undefined {
+  if (!('workspaceDirectory' in event)) return undefined
+  const directory = event.workspaceDirectory
+  return typeof directory === 'string' && directory ? directory : undefined
+}
+
+/** Directory-scoped lifecycle events that should not be broadcast to every window. */
+export function isDirectoryScopedEccRuntimeEvent(event: EccRuntimeEvent): boolean {
+  return (
+    event.type === 'runtime.ready' ||
+    event.type === 'runtime.exited' ||
+    event.type === 'runtime.stderr'
+  )
+}
+
+/** @deprecated Use isDirectoryScopedEccRuntimeEvent. Kept for existing test imports. */
+export function isGlobalEccRuntimeEvent(event: EccRuntimeEvent): boolean {
+  return isDirectoryScopedEccRuntimeEvent(event)
+}
+
+let openOrFocusQueue: Promise<unknown> = Promise.resolve()
+
+function enqueueOpenOrFocus<T>(operation: () => Promise<T>): Promise<T> {
+  const next = openOrFocusQueue.then(operation, operation)
+  openOrFocusQueue = next.then(
+    () => undefined,
+    () => undefined,
+  )
+  return next
 }
 
 async function pickDirectory(
@@ -313,6 +407,20 @@ async function pickFiles(options?: DesktopFileDialogOptions): Promise<string[] |
   return filePaths.length > 0 ? filePaths : null
 }
 
+async function saveFile(
+  event: IpcMainInvokeEvent,
+  options?: DesktopSaveFileDialogOptions,
+): Promise<string | null> {
+  const { ensureDirectory, ...dialogOptions } = options ?? {}
+  if (ensureDirectory && dialogOptions.defaultPath) {
+    await mkdir(dirname(dialogOptions.defaultPath), { recursive: true })
+  }
+
+  const result = await dialog.showSaveDialog(getEventWindow(event), dialogOptions)
+
+  return result.canceled ? null : (result.filePath ?? null)
+}
+
 async function classifyLocalPaths(paths: string[]): Promise<PickedRtlSources> {
   const files: string[] = []
   const directories: string[] = []
@@ -339,7 +447,7 @@ async function pickRtlSources(
     filters: [
       {
         name: 'HDL Files',
-        extensions: ['v', 'sv', 'vhd', 'vhdl'],
+        extensions: ['v', 'sv', 'vhd', 'vhdl', 'gz'],
       },
     ],
   })
@@ -387,6 +495,74 @@ export function registerIpc(
       onDestroyed: () => void
     }
   >()
+  const workspaceHandleSubscriptions = new Map<
+    string,
+    {
+      directory: string
+      sender: IpcMainInvokeEvent['sender']
+      onDestroyed: () => void
+    }
+  >()
+  const workspaceHandleClosePromises = new Map<string, Promise<unknown>>()
+  /** Last runtime.ready per directory, replayed when a handle subscribes after ensureStarted. */
+  const lastReadyByDirectory = new Map<string, EccRuntimeEvent>()
+
+  const sendEccEventToSender = (
+    sender: IpcMainInvokeEvent['sender'],
+    payload: EccRuntimeEvent,
+  ): void => {
+    if (typeof sender.isDestroyed === 'function' && sender.isDestroyed()) {
+      return
+    }
+    sender.send(desktopApiEventChannels.eccEvent, payload)
+  }
+
+  const deliverDirectoryScopedEvent = (payload: EccRuntimeEvent): void => {
+    const workspaceDirectory = readWorkspaceDirectoryFromEvent(payload)
+    if (!workspaceDirectory) {
+      return
+    }
+    const normalizedDirectory = normalizeWorkspacePath(workspaceDirectory)
+    if (!normalizedDirectory) {
+      return
+    }
+
+    if (payload.type === 'runtime.ready') {
+      lastReadyByDirectory.set(normalizedDirectory, {
+        ...payload,
+        workspaceDirectory: normalizedDirectory,
+      })
+    } else if (payload.type === 'runtime.exited') {
+      lastReadyByDirectory.delete(normalizedDirectory)
+    }
+
+    const deliveredSenders = new Set<IpcMainInvokeEvent['sender']>()
+    for (const subscription of workspaceHandleSubscriptions.values()) {
+      if (subscription.directory !== normalizedDirectory) continue
+      if (deliveredSenders.has(subscription.sender)) continue
+      deliveredSenders.add(subscription.sender)
+      sendEccEventToSender(subscription.sender, {
+        ...payload,
+        workspaceDirectory: normalizedDirectory,
+      })
+    }
+  }
+
+  services.eccRuntimeService.onEvent((payload) => {
+    const workspaceHandle = readWorkspaceHandleFromEvent(payload)
+    if (workspaceHandle) {
+      const subscription = workspaceHandleSubscriptions.get(workspaceHandle)
+      if (!subscription) return
+      sendEccEventToSender(subscription.sender, payload)
+      return
+    }
+
+    if (!isDirectoryScopedEccRuntimeEvent(payload)) {
+      return
+    }
+
+    deliverDirectoryScopedEvent(payload)
+  })
 
   const unwatchProjectFile = async (subscriptionId: string): Promise<void> => {
     const subscription = projectFileWatchSubscriptions.get(subscriptionId)
@@ -430,6 +606,88 @@ export function registerIpc(
     await services.shellService.kill(sessionId)
   }
 
+  const closeTrackedWorkspaceHandle = async (
+    workspaceHandle: string,
+  ): Promise<unknown> => {
+    const existingClose = workspaceHandleClosePromises.get(workspaceHandle)
+    if (existingClose) {
+      return await existingClose
+    }
+
+    const subscription = workspaceHandleSubscriptions.get(workspaceHandle)
+    if (subscription) {
+      workspaceHandleSubscriptions.delete(workspaceHandle)
+      if (typeof subscription.sender.off === 'function') {
+        subscription.sender.off('destroyed', subscription.onDestroyed)
+      }
+    }
+
+    const closePromise = Promise.resolve().then(() =>
+      services.eccRuntimeService.closeWorkspace({ workspaceHandle }),
+    )
+    const trackedClosePromise = closePromise.finally(() => {
+      workspaceHandleClosePromises.delete(workspaceHandle)
+    })
+    workspaceHandleClosePromises.set(workspaceHandle, trackedClosePromise)
+    return await trackedClosePromise
+  }
+
+  const trackWorkspaceHandle = (
+    sender: IpcMainInvokeEvent['sender'],
+    workspaceHandle: string,
+    directory: string,
+  ): void => {
+    if (!workspaceHandle || workspaceHandleClosePromises.has(workspaceHandle)) {
+      return
+    }
+
+    const normalizedDirectory = normalizeWorkspacePath(directory)
+    if (!normalizedDirectory) {
+      return
+    }
+
+    const previous = workspaceHandleSubscriptions.get(workspaceHandle)
+    if (previous && typeof previous.sender.off === 'function') {
+      previous.sender.off('destroyed', previous.onDestroyed)
+    }
+
+    const onDestroyed = (): void => {
+      void closeTrackedWorkspaceHandle(workspaceHandle)
+    }
+    workspaceHandleSubscriptions.set(workspaceHandle, {
+      directory: normalizedDirectory,
+      sender,
+      onDestroyed,
+    })
+    if (typeof sender.once === 'function') {
+      sender.once('destroyed', onDestroyed)
+    }
+
+    const isDestroyed =
+      typeof sender.isDestroyed === 'function' ? sender.isDestroyed() : false
+    if (isDestroyed) {
+      onDestroyed()
+      return
+    }
+
+    const pendingReady = lastReadyByDirectory.get(normalizedDirectory)
+    if (pendingReady) {
+      sendEccEventToSender(sender, pendingReady)
+    }
+  }
+
+  const workspaceHandleFromResult = (result: unknown): string | null => {
+    if (typeof result !== 'object' || result === null) return null
+    if (!('workspaceHandle' in result)) return null
+    return typeof result.workspaceHandle === 'string' ? result.workspaceHandle : null
+  }
+
+  const workspaceDirectoryFromResult = (result: unknown): string | null => {
+    if (typeof result !== 'object' || result === null) return null
+    if (!('directory' in result)) return null
+    return typeof result.directory === 'string' ? result.directory : null
+  }
+
   handle(desktopApiIpcChannels.appGetVersions, async () => {
     return await services.appInfoService.getVersions()
   })
@@ -456,6 +714,98 @@ export function registerIpc(
 
   handle(desktopApiIpcChannels.windowIsMaximized, (event) => {
     return isWindowMaximized(getEventWindow(event))
+  })
+
+  handle(desktopApiIpcChannels.windowCreate, async (_event, options) => {
+    if (!services.createWindow) {
+      throw new Error('Window creation is not available')
+    }
+    const initialRoute =
+      typeof options === 'object' &&
+      options !== null &&
+      'initialRoute' in options &&
+      typeof options.initialRoute === 'string'
+        ? options.initialRoute
+        : '/'
+    await services.createWindow({ initialRoute })
+  })
+
+  handle(desktopApiIpcChannels.workspaceOpenOrFocus, async (event, path) => {
+    return await enqueueOpenOrFocus(async (): Promise<WorkspaceOpenOrFocusResult> => {
+      if (typeof path !== 'string') {
+        throw new Error('Workspace path must be a string')
+      }
+      const caller = BrowserWindow.fromWebContents(event.sender)
+      const existing = workspaceWindowRegistry.findWindow(path)
+      if (existing) {
+        // Same window already owns the path (e.g. renderer reload): idempotent proceed.
+        if (caller && existing === (caller as WorkspaceWindowLike)) {
+          return { action: 'proceed' }
+        }
+        workspaceWindowRegistry.focusWindow(existing)
+        return { action: 'focused' }
+      }
+      if (!caller) {
+        throw new Error('Caller window is not available')
+      }
+      const previousPath = workspaceWindowRegistry.getPathForWindow(
+        caller as WorkspaceWindowLike,
+      )
+      // Claim the path immediately so a concurrent open in another window focuses us.
+      const claimed = workspaceWindowRegistry.register(
+        path,
+        caller as WorkspaceWindowLike,
+      )
+      if (previousPath && previousPath !== claimed) {
+        return { action: 'proceed', previousPath }
+      }
+      return { action: 'proceed' }
+    })
+  })
+
+  handle(desktopApiIpcChannels.workspaceBindWindow, async (event, path) => {
+    if (typeof path !== 'string') {
+      throw new Error('Workspace path must be a string')
+    }
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) {
+      throw new Error('Caller window is not available')
+    }
+    const existing = workspaceWindowRegistry.findWindow(path)
+    if (existing && existing !== (window as WorkspaceWindowLike)) {
+      workspaceWindowRegistry.focusWindow(existing)
+      throw new Error('Workspace is already open in another window')
+    }
+    return workspaceWindowRegistry.register(path, window as WorkspaceWindowLike)
+  })
+
+  handle(desktopApiIpcChannels.workspaceUnbindWindow, async (event, path) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (typeof path === 'string' && path.trim()) {
+      const owner = workspaceWindowRegistry.findWindow(path)
+      if (owner && window && owner !== (window as WorkspaceWindowLike)) {
+        return
+      }
+      workspaceWindowRegistry.unregisterByPath(path)
+      return
+    }
+    if (window) {
+      workspaceWindowRegistry.unregisterByWindow(window as WorkspaceWindowLike)
+    }
+  })
+
+  handle(desktopApiIpcChannels.workspaceGetBoundPath, async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return null
+    return workspaceWindowRegistry.getPathForWindow(window as WorkspaceWindowLike)
+  })
+
+  handle(desktopApiIpcChannels.menuSetActionEnabled, (event, action, enabled) => {
+    setMenuActionEnabled(
+      action as DesktopMenuEventId,
+      enabled as boolean,
+      event.sender.id,
+    )
   })
 
   handle(desktopApiIpcChannels.settingsGet, async (_event, key) => {
@@ -488,6 +838,20 @@ export function registerIpc(
     )
   })
 
+  handle(desktopApiIpcChannels.projectManifestMutate, async (_event, request) => {
+    if (!isRecord(request))
+      throw new Error('Project manifest mutation request must be an object')
+    if (typeof request.projectRoot !== 'string') {
+      throw new Error('Project manifest mutation projectRoot must be a string')
+    }
+    if (!isRecord(request.mutation) || typeof request.mutation.type !== 'string') {
+      throw new Error('Project manifest mutation must include a type')
+    }
+    return await services.projectManifestService.mutate(
+      request as unknown as ProjectManifestMutationRequest,
+    )
+  })
+
   handle(desktopApiIpcChannels.dialogPickDirectory, async (_event, options) => {
     return await pickDirectory(options as DesktopDirectoryDialogOptions | undefined)
   })
@@ -500,6 +864,10 @@ export function registerIpc(
     return await pickRtlSources(options as DesktopRtlSourceDialogOptions | undefined)
   })
 
+  handle(desktopApiIpcChannels.dialogSaveFile, async (event, options) => {
+    return await saveFile(event, options as DesktopSaveFileDialogOptions | undefined)
+  })
+
   handle(desktopApiIpcChannels.workspaceIsProjectDirectory, async (_event, path) => {
     return await services.workspaceService.isProjectDirectory(path as string)
   })
@@ -508,7 +876,21 @@ export function registerIpc(
     return await services.workspaceService.registerProjectRoot(path as string)
   })
 
-  handle(desktopApiIpcChannels.workspaceClearProjectRoot, async () => {
+  handle(desktopApiIpcChannels.workspaceClearProjectRoot, async (event) => {
+    const sender = event.sender
+    for (const [
+      subscriptionId,
+      subscription,
+    ] of projectFileWatchSubscriptions.entries()) {
+      if (subscription.sender === sender) {
+        await unwatchProjectFile(subscriptionId)
+      }
+    }
+    for (const [subscriptionId, subscription] of projectLogTailSubscriptions.entries()) {
+      if (subscription.sender === sender) {
+        await unsubscribeProjectLogTail(subscriptionId)
+      }
+    }
     await services.workspaceService.clearProjectRoot()
   })
 
@@ -614,6 +996,49 @@ export function registerIpc(
         path as string,
         content as string,
       )
+    },
+  )
+
+  handle(desktopApiIpcChannels.workspaceListProjectDirectory, async (_event, path) => {
+    return await services.workspaceService.listProjectDirectory(path as string)
+  })
+
+  handle(
+    desktopApiIpcChannels.workspacePrepareProjectDirectoryReplacement,
+    async (_event, path) => {
+      return await services.workspaceService.prepareProjectDirectoryReplacement(
+        path as string,
+      )
+    },
+  )
+
+  handle(
+    desktopApiIpcChannels.workspaceRestoreProjectDirectoryReplacement,
+    async (_event, replacementId) => {
+      if (typeof replacementId !== 'string') {
+        throw new Error('Workspace replacement id must be a string')
+      }
+      await services.workspaceService.restoreProjectDirectoryReplacement(replacementId)
+    },
+  )
+
+  handle(
+    desktopApiIpcChannels.workspaceFinalizeProjectDirectoryReplacement,
+    async (_event, replacementId) => {
+      if (typeof replacementId !== 'string') {
+        throw new Error('Workspace replacement id must be a string')
+      }
+      await services.workspaceService.finalizeProjectDirectoryReplacement(replacementId)
+    },
+  )
+
+  handle(
+    desktopApiIpcChannels.workspaceRetainProjectDirectoryReplacement,
+    async (_event, replacementId) => {
+      if (typeof replacementId !== 'string') {
+        throw new Error('Workspace replacement id must be a string')
+      }
+      await services.workspaceService.retainProjectDirectoryReplacement(replacementId)
     },
   )
 
@@ -796,20 +1221,95 @@ export function registerIpc(
     return await services.resourceManagerService.refreshRegistry()
   })
 
-  handle(desktopApiIpcChannels.cliExecute, async (event, request) => {
-    const sender = event.sender
-    const isSenderDestroyed = (): boolean =>
-      typeof sender.isDestroyed === 'function' ? sender.isDestroyed() : false
+  handle(desktopApiIpcChannels.eccRpcHello, async () => {
+    return await services.eccRuntimeService.rpcHello()
+  })
 
-    return await services.desktopRuntimeManager.execute(
-      request as DesktopCliCommandRequest,
-      (payload) => {
-        if (isSenderDestroyed()) return
-        if (typeof sender.send === 'function') {
-          sender.send(desktopApiEventChannels.cliEvent, payload)
-        }
-      },
+  handle(desktopApiIpcChannels.eccRpcPing, async () => {
+    return await services.eccRuntimeService.rpcPing()
+  })
+
+  handle(desktopApiIpcChannels.eccRpcShutdown, async () => {
+    return await services.eccRuntimeService.rpcShutdown()
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceCreate, async (event, request) => {
+    const result = await services.eccRuntimeService.createWorkspace(
+      request as EccWorkspaceCreateRequest,
     )
+    const workspaceHandle = workspaceHandleFromResult(result)
+    const directory = workspaceDirectoryFromResult(result)
+    if (workspaceHandle && directory) {
+      trackWorkspaceHandle(event.sender, workspaceHandle, directory)
+    }
+    return result
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceOpen, async (event, request) => {
+    const result = await services.eccRuntimeService.openWorkspace(
+      request as EccWorkspaceOpenRequest,
+    )
+    const workspaceHandle = workspaceHandleFromResult(result)
+    const directory = workspaceDirectoryFromResult(result)
+    if (workspaceHandle && directory) {
+      trackWorkspaceHandle(event.sender, workspaceHandle, directory)
+    }
+    return result
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceClose, async (_event, request) => {
+    const closeRequest = request as EccWorkspaceHandleRequest
+    return await closeTrackedWorkspaceHandle(closeRequest.workspaceHandle)
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceHome, async (_event, request) => {
+    return await services.eccRuntimeService.workspaceHome(
+      request as EccWorkspaceHandleRequest,
+    )
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceInfo, async (_event, request) => {
+    return await services.eccRuntimeService.workspaceInfo(
+      request as EccWorkspaceInfoRequest,
+    )
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceRefreshConfig, async (_event, request) => {
+    return await services.eccRuntimeService.refreshConfig(
+      request as EccWorkspaceHandleRequest,
+    )
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceSyncConfig, async (_event, request) => {
+    return await services.eccRuntimeService.syncConfig(
+      request as EccWorkspaceSyncConfigRequest,
+    )
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceResetFlow, async (_event, request) => {
+    return await services.eccRuntimeService.resetFlow(
+      request as EccWorkspaceHandleRequest,
+    )
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceExportSignoff, async (_event, request) => {
+    return await services.eccRuntimeService.exportSignoff(
+      request as EccWorkspaceExportSignoffRequest,
+    )
+  })
+
+  handle(desktopApiIpcChannels.eccWorkspaceInspectSignoff, async (_event, request) => {
+    return await services.eccRuntimeService.inspectSignoff(
+      request as EccWorkspaceHandleRequest,
+    )
+  })
+
+  handle(desktopApiIpcChannels.eccFlowRun, async (_event, request) => {
+    return await services.eccRuntimeService.runFlow(request as EccFlowRunRequest)
+  })
+
+  handle(desktopApiIpcChannels.eccFlowRunStep, async (_event, request) => {
+    return await services.eccRuntimeService.runStep(request as EccFlowRunStepRequest)
   })
 
   handle(desktopApiIpcChannels.shellCreateSession, async (event, options) => {

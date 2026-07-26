@@ -445,6 +445,7 @@ export function useStepConfigInfo() {
             data: {
               config_path: resolvedPath,
               directory: projectPath,
+              workspaceHandle: workspaceLifecycle.session.value.workspaceId,
             },
           }),
         )

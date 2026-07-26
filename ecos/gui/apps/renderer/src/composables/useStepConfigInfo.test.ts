@@ -366,6 +366,7 @@ describe('useStepConfigInfo', () => {
       data: {
         config_path: '/workspace/demo/config/fp_default_config.json',
         directory: '/workspace/demo',
+        workspaceHandle: 'workspace-demo',
       },
     })
     expect(lifecycle.resourceVersions.value['step-config']).toBe(

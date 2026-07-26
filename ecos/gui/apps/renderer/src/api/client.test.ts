@@ -27,9 +27,10 @@ describe('waitForRuntimeReady', () => {
 
   it('checks desktop bridge availability without resolving an API port', async () => {
     const desktopBridge = {
-      cli: {
-        execute: vi.fn(),
-        onEvent: vi.fn(),
+      ecc: {
+        rpc: {
+          hello: vi.fn(),
+        },
       },
       workspace: {},
     }

@@ -576,6 +576,7 @@ export function useParameters() {
           cmd: CMDEnum.refresh_config,
           data: {
             directory: saveProjectPath,
+            workspaceHandle: workspaceLifecycle.session.value.workspaceId,
           },
         }),
       )

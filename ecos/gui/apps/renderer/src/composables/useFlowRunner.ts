@@ -73,7 +73,7 @@ function clearTransientInteractionLocks() {
  * 负责处理流程的运行、停止、重置等操作
  *
  * Runtime lifecycle events 由 useWorkspace 管理（workspace 级别订阅），
- * 本 Hook 只负责调用 CLI-backed runtime command 并等待结果。
+ * 本 Hook 只负责调用 ECC RPC runtime command 并等待结果。
  */
 export function useFlowRunner() {
   const { ensureDesktopRuntime } = useDesktopRuntime()
@@ -120,6 +120,10 @@ export function useFlowRunner() {
     return path ? normalizeWorkspacePath(path) : null
   }
 
+  function getCurrentWorkspaceHandle(): string | null {
+    return workspaceSession.value.workspaceId || null
+  }
+
   /**
    * 运行当前步骤
    */
@@ -135,7 +139,7 @@ export function useFlowRunner() {
     // 检查是否在 desktop runtime 环境中
     if (!ensureDesktopRuntime()) {
       console.warn(
-        'Not running in desktop runtime environment, cannot execute ECC CLI flow command',
+        'Not running in desktop runtime environment, cannot execute ECC RPC flow command',
       )
       showDesktopRequiredToast()
       return { step: step as StepEnum, state: StateEnum.Invalid }
@@ -146,7 +150,8 @@ export function useFlowRunner() {
     }
 
     const directory = getCurrentWorkspacePath()
-    if (!directory) {
+    const workspaceHandle = getCurrentWorkspaceHandle()
+    if (!directory || !workspaceHandle) {
       showToast({
         severity: 'error',
         summary: 'No Workspace Open',
@@ -175,6 +180,7 @@ export function useFlowRunner() {
           directory,
           step: step as StepEnum,
           rerun: Boolean(options.rerun),
+          workspaceHandle,
         },
       })
       console.log('run step result', result)
@@ -223,15 +229,15 @@ export function useFlowRunner() {
   /**
    * 运行所有步骤
    *
-   * 调用 rtl2gds runtime command（同步等待 CLI 执行完成）。
-   * 执行过程中，Electron runtime 转发 CLI lifecycle events，
+   * 调用 rtl2gds runtime command（同步等待 ECC RPC 执行完成）。
+   * 执行过程中，Electron runtime 转发 lifecycle events，
    * 前端通过 useWorkspace 中已建立的 runtime event 连接实时接收。
    */
   async function runAllFlow(options: FlowRunOptions = {}): Promise<any | null> {
     // 检查是否在 desktop runtime 环境中
     if (!ensureDesktopRuntime()) {
       console.warn(
-        'Not running in desktop runtime environment, cannot execute ECC CLI flow command',
+        'Not running in desktop runtime environment, cannot execute ECC RPC flow command',
       )
       showDesktopRequiredToast()
       return null
@@ -242,7 +248,8 @@ export function useFlowRunner() {
     }
 
     const directory = getCurrentWorkspacePath()
-    if (!directory) {
+    const workspaceHandle = getCurrentWorkspaceHandle()
+    if (!directory || !workspaceHandle) {
       showToast({
         severity: 'error',
         summary: 'No Workspace Open',
@@ -272,6 +279,7 @@ export function useFlowRunner() {
         data: {
           directory,
           rerun: Boolean(options.rerun),
+          workspaceHandle,
         },
       })
       console.log('rtl2gds result:', result)

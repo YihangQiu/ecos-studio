@@ -83,11 +83,7 @@ describe('WorkspaceResourceService', () => {
     })
     await writeFile(join(root, 'place_ecc', 'output', 'gcd_place.json'), '{}', 'utf8')
     await writeFile(join(root, 'place_ecc', 'output', 'gcd_place.png'), 'png', 'utf8')
-    await writeFile(
-      join(root, 'place_ecc', 'analysis', 'place_metrics.json'),
-      '{}',
-      'utf8',
-    )
+    await writeFile(join(root, 'place_ecc', 'analysis', 'qor_metrics.json'), '{}', 'utf8')
 
     const service = new WorkspaceResourceService({ projectScopeProvider: provider(root) })
     const index = await service.getIndex()
@@ -338,6 +334,38 @@ describe('WorkspaceResourceService', () => {
     )
   })
 
+  it('resolves Harden preview and subflow resources from the ECC step directory', async () => {
+    const root = await tempWorkspace()
+    await writeWorkspace(root, [{ name: 'Harden', tool: 'ecc' }])
+    await mkdir(join(root, 'Harden_ecc', 'output'), { recursive: true })
+    await writeFile(join(root, 'Harden_ecc', 'output', 'gcd_Harden.png'), 'png', 'utf8')
+    await writeJson(join(root, 'Harden_ecc', 'subflow.json'), {
+      path: join(root, 'Harden_ecc', 'subflow.json'),
+      steps: [{ name: 'run harden', state: 'Success' }],
+    })
+
+    const service = new WorkspaceResourceService({ projectScopeProvider: provider(root) })
+
+    await expect(
+      service.resolveStepInfo({ step: 'harden', id: 'layout' }),
+    ).resolves.toMatchObject({
+      step: 'Harden',
+      response: 'missing',
+      info: {
+        image: join(root, 'Harden_ecc', 'output', 'gcd_Harden.png'),
+      },
+    })
+    await expect(
+      service.resolveStepInfo({ step: 'Harden', id: 'subflow' }),
+    ).resolves.toMatchObject({
+      step: 'Harden',
+      response: 'available',
+      info: {
+        path: join(root, 'Harden_ecc', 'subflow.json'),
+      },
+    })
+  })
+
   it('maps yosys config to flow_config.json', async () => {
     const root = await tempWorkspace()
     await mkdir(join(root, 'home'), { recursive: true })
@@ -523,7 +551,7 @@ describe('WorkspaceResourceService', () => {
     })
     await writeJson(join(root, 'home', 'home.json'), {})
     await writeFile(
-      join(root, 'Synthesis_yosys', 'analysis', 'Synthesis_metrics.json'),
+      join(root, 'Synthesis_yosys', 'analysis', 'qor_metrics.json'),
       '{}',
       'utf8',
     )
@@ -551,7 +579,7 @@ describe('WorkspaceResourceService', () => {
       id: 'analysis',
       response: 'available',
       info: {
-        metrics: join(root, 'Synthesis_yosys', 'analysis', 'Synthesis_metrics.json'),
+        metrics: join(root, 'Synthesis_yosys', 'analysis', 'qor_metrics.json'),
         'data summary': join(root, 'Synthesis_yosys', 'feature', 'Synthesis_stat.json'),
         'step report': {
           stat: join(root, 'Synthesis_yosys', 'report', 'Synthesis_stat.json'),

@@ -1,8 +1,31 @@
-import { toDesktopCliData } from './desktopPayload'
-import { RequestData, ResponseData, StepEnum, InfoEnum, StateEnum } from './type'
+import { toDesktopBridgeData } from './desktopPayload'
+import {
+  RequestData,
+  ResponseData,
+  StepEnum,
+  InfoEnum,
+  StateEnum,
+  CMDEnum,
+  ResponseEnum,
+} from './type'
 import { getDesktopApi } from '@/platform/desktop'
 
+function workspaceHandleFromData(data: Record<string, unknown>): string {
+  return String(data.workspaceHandle ?? data.workspace_handle ?? data.directory ?? '')
+}
+
+function success<T>(cmd: CMDEnum, data: T, message: string[] = []): ResponseData<T> {
+  return {
+    cmd,
+    data,
+    message,
+    response: ResponseEnum.success,
+  }
+}
+
 export interface GetInfoRequest {
+  workspaceHandle?: string
+  workspace_handle?: string
   step: StepEnum
   id: InfoEnum
 }
@@ -14,16 +37,23 @@ export interface GetInfoResponse {
 }
 
 export function getInfoApi(request: RequestData<GetInfoRequest>) {
-  return getDesktopApi().cli.execute({
-    cmd: 'get_info',
-    data: toDesktopCliData(request.data as unknown as Record<string, unknown>),
-    source: 'button',
-  }) as unknown as Promise<ResponseData<GetInfoResponse>>
+  const data = toDesktopBridgeData(request.data as unknown as Record<string, unknown>)
+  return getDesktopApi()
+    .ecc.workspace.info({
+      id: String(data.id ?? ''),
+      step: String(data.step ?? ''),
+      workspaceHandle: workspaceHandleFromData(data),
+    })
+    .then((result) => success(CMDEnum.get_info, result as GetInfoResponse)) as Promise<
+    ResponseData<GetInfoResponse>
+  >
 }
 
 export interface RTL2GDSRequest {
   directory: string
   rerun: boolean
+  workspaceHandle?: string
+  workspace_handle?: string
 }
 
 export interface RTL2GDSResponse {
@@ -31,17 +61,23 @@ export interface RTL2GDSResponse {
 }
 
 export function rtl2gdsApi(request: RequestData<RTL2GDSRequest>) {
-  return getDesktopApi().cli.execute({
-    cmd: 'rtl2gds',
-    data: toDesktopCliData(request.data as unknown as Record<string, unknown>),
-    source: 'button',
-  }) as unknown as Promise<ResponseData<RTL2GDSResponse>>
+  const data = toDesktopBridgeData(request.data as unknown as Record<string, unknown>)
+  return getDesktopApi()
+    .ecc.flow.run({
+      rerun: Boolean(data.rerun),
+      workspaceHandle: workspaceHandleFromData(data),
+    })
+    .then((result) => success(CMDEnum.rtl2gds, result as RTL2GDSResponse)) as Promise<
+    ResponseData<RTL2GDSResponse>
+  >
 }
 
 export interface RunStepRequest {
   directory: string
   step: StepEnum
   rerun: boolean
+  workspaceHandle?: string
+  workspace_handle?: string
 }
 
 export interface RunStepResponse {
@@ -50,15 +86,22 @@ export interface RunStepResponse {
 }
 
 export function runStepApi(request: RequestData<RunStepRequest>) {
-  return getDesktopApi().cli.execute({
-    cmd: 'run_step',
-    data: toDesktopCliData(request.data as unknown as Record<string, unknown>),
-    source: 'button',
-  }) as unknown as Promise<ResponseData<RunStepResponse>>
+  const data = toDesktopBridgeData(request.data as unknown as Record<string, unknown>)
+  return getDesktopApi()
+    .ecc.flow.runStep({
+      rerun: Boolean(data.rerun),
+      step: String(data.step ?? ''),
+      workspaceHandle: workspaceHandleFromData(data),
+    })
+    .then((result) => success(CMDEnum.run_step, result as RunStepResponse)) as Promise<
+    ResponseData<RunStepResponse>
+  >
 }
 
 export interface RefreshConfigRequest {
   directory: string
+  workspaceHandle?: string
+  workspace_handle?: string
 }
 
 export interface RefreshConfigResponse {
@@ -67,16 +110,21 @@ export interface RefreshConfigResponse {
 }
 
 export function refreshConfigApi(request: RequestData<RefreshConfigRequest>) {
-  return getDesktopApi().cli.execute({
-    cmd: 'refresh_config',
-    data: toDesktopCliData(request.data as unknown as Record<string, unknown>),
-    source: 'button',
-  }) as unknown as Promise<ResponseData<RefreshConfigResponse>>
+  const data = toDesktopBridgeData(request.data as unknown as Record<string, unknown>)
+  return getDesktopApi()
+    .ecc.workspace.refreshConfig({
+      workspaceHandle: workspaceHandleFromData(data),
+    })
+    .then((result) =>
+      success(CMDEnum.refresh_config, result as RefreshConfigResponse),
+    ) as Promise<ResponseData<RefreshConfigResponse>>
 }
 
 export interface SyncConfigRequest {
   directory: string
   config_path: string
+  workspaceHandle?: string
+  workspace_handle?: string
 }
 
 export interface SyncConfigResponse {
@@ -87,15 +135,27 @@ export interface SyncConfigResponse {
 }
 
 export function syncConfigApi(request: RequestData<SyncConfigRequest>) {
-  return getDesktopApi().cli.execute({
-    cmd: 'sync_config',
-    data: toDesktopCliData(request.data as unknown as Record<string, unknown>),
-    source: 'button',
-  }) as unknown as Promise<ResponseData<SyncConfigResponse>>
+  const data = toDesktopBridgeData(request.data as unknown as Record<string, unknown>)
+  return getDesktopApi()
+    .ecc.workspace.syncConfig({
+      configPath: String(data.config_path ?? data.configPath ?? ''),
+      workspaceHandle: workspaceHandleFromData(data),
+    })
+    .then(
+      (result) =>
+        success(CMDEnum.sync_config, {
+          config_path: result.configPath,
+          directory: result.directory,
+          parameters_changed: result.parametersChanged,
+          refreshed: result.refreshed,
+        }) as ResponseData<SyncConfigResponse>,
+    )
 }
 
 export interface ResetFlowRequest {
   directory: string
+  workspaceHandle?: string
+  workspace_handle?: string
 }
 
 export interface ResetFlowResponse {
@@ -103,11 +163,14 @@ export interface ResetFlowResponse {
 }
 
 export function resetFlowApi(request: RequestData<ResetFlowRequest>) {
-  return getDesktopApi().cli.execute({
-    cmd: 'reset_flow',
-    data: toDesktopCliData(request.data as unknown as Record<string, unknown>),
-    source: 'button',
-  }) as unknown as Promise<ResponseData<ResetFlowResponse>>
+  const data = toDesktopBridgeData(request.data as unknown as Record<string, unknown>)
+  return getDesktopApi()
+    .ecc.workspace.resetFlow({
+      workspaceHandle: workspaceHandleFromData(data),
+    })
+    .then((result) =>
+      success(CMDEnum.reset_flow, result as ResetFlowResponse),
+    ) as Promise<ResponseData<ResetFlowResponse>>
 }
 
 // ============ Home Page API ============
@@ -119,10 +182,10 @@ export interface HomePageResponse {
 /**
  * 调用 home_page runtime command 获取 home.json 的路径
  */
-export function getHomePageApi() {
-  return getDesktopApi().cli.execute({
-    cmd: 'home_page',
-    data: toDesktopCliData({}),
-    source: 'button',
-  }) as unknown as Promise<ResponseData<HomePageResponse>>
+export function getHomePageApi(workspaceHandle = '') {
+  return getDesktopApi()
+    .ecc.workspace.home({ workspaceHandle })
+    .then((result) => success(CMDEnum.home_page, result as HomePageResponse)) as Promise<
+    ResponseData<HomePageResponse>
+  >
 }

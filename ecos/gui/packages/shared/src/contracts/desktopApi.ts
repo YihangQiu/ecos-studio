@@ -17,11 +17,11 @@ import type {
   ResourceOperationResult,
 } from './resources.ts'
 import type { RemoteContentApi } from './remoteContent.ts'
+import type { EccRuntimeApi } from './eccRuntime.ts'
 import type {
-  DesktopCliCommandEvent,
-  DesktopCliCommandRequest,
-  DesktopCliCommandResult,
-} from './desktopCli.ts'
+  ProjectManifestMutationRequest,
+  ProjectManifestMutationResult,
+} from '../utils/projectManifest.ts'
 import type {
   DesktopEventUnsubscribe,
   DesktopMenuEventId,
@@ -58,6 +58,13 @@ export interface DesktopFileDialogOptions {
   title?: string
   multiple?: boolean
   filters?: DesktopFileDialogFilter[]
+}
+
+export interface DesktopSaveFileDialogOptions {
+  title?: string
+  defaultPath?: string
+  filters?: DesktopFileDialogFilter[]
+  ensureDirectory?: boolean
 }
 
 export interface DesktopRtlSourceDialogOptions {
@@ -118,17 +125,41 @@ export interface DesktopProjectLogTailSubscriptionOptions {
   pollIntervalMs?: number
 }
 
-export interface LayoutViewerOpenRequest {
-  projectPath: string
-  viewJsonPackageRoot: string
-  rebuildPackage?: boolean
+export interface DesktopProjectDirectoryEntry {
+  name: string
+  path: string
+  type: 'file' | 'directory'
 }
 
-export interface LayoutViewerOpenResult {
-  packageRoot: string
-  layoutPackagePath: string
+export interface ChipViewerOpenRequest {
+  projectPath: string
+  step: string
+  mode?: 'view' | 'edit'
+}
+
+export interface ChipViewerOpenResult {
+  editCommandDirectory?: string
+  editResultDirectory?: string
+  geometryManifestPath: string
+  workspaceStepDirectory: string
   spawned: boolean
 }
+
+export interface WorkspaceDirectoryReplacement {
+  id: string
+  targetPath: string
+  backupPath: string
+}
+
+export type WorkspaceOpenOrFocusResult =
+  | {
+      action: 'focused'
+    }
+  | {
+      action: 'proceed'
+      /** Path previously bound to the caller window, if openOrFocus replaced it. */
+      previousPath?: string
+    }
 
 export interface DesktopApi {
   app: {
@@ -141,12 +172,14 @@ export interface DesktopApi {
     confirmClose(): Promise<void>
     setTitle(title: string): Promise<void>
     isMaximized(): Promise<boolean>
+    create(options?: { initialRoute?: string }): Promise<void>
     onCloseRequested(listener: () => void): DesktopEventUnsubscribe
     onResized(listener: () => void): DesktopEventUnsubscribe
     onMaximizedChanged(listener: (isMaximized: boolean) => void): DesktopEventUnsubscribe
   }
   menu: {
     onAction(listener: (eventId: DesktopMenuEventId) => void): DesktopEventUnsubscribe
+    setActionEnabled(action: DesktopMenuEventId, enabled: boolean): Promise<void>
   }
   system: {
     openExternal(url: string): Promise<void>
@@ -159,15 +192,25 @@ export interface DesktopApi {
     delete(key: string): Promise<void>
   }
   remoteContent: RemoteContentApi
+  projectManifest: {
+    mutate(
+      request: ProjectManifestMutationRequest,
+    ): Promise<ProjectManifestMutationResult>
+  }
   dialog: {
     pickDirectory(options?: DesktopDirectoryDialogOptions): Promise<string | null>
     pickFiles(options?: DesktopFileDialogOptions): Promise<string[] | null>
+    saveFile(options?: DesktopSaveFileDialogOptions): Promise<string | null>
     pickRtlSources(
       options?: DesktopRtlSourceDialogOptions,
     ): Promise<PickedRtlSources | null>
   }
   workspace: {
     isProjectDirectory(path: string): Promise<boolean>
+    openOrFocus(path: string): Promise<WorkspaceOpenOrFocusResult>
+    bindWindow(path: string): Promise<string>
+    unbindWindow(path?: string): Promise<void>
+    getBoundPath(): Promise<string | null>
     registerProjectRoot(path: string): Promise<string>
     clearProjectRoot(): Promise<void>
     requestProjectPathAccess(path: string): Promise<string>
@@ -190,6 +233,13 @@ export interface DesktopApi {
     ): Promise<DesktopEventUnsubscribe>
     readProjectBinaryFile(path: string): Promise<Uint8Array>
     writeProjectTextFile(path: string, content: string): Promise<void>
+    listProjectDirectory(path: string): Promise<DesktopProjectDirectoryEntry[]>
+    prepareProjectDirectoryReplacement(
+      path: string,
+    ): Promise<WorkspaceDirectoryReplacement | null>
+    restoreProjectDirectoryReplacement(replacementId: string): Promise<void>
+    finalizeProjectDirectoryReplacement(replacementId: string): Promise<void>
+    retainProjectDirectoryReplacement(replacementId: string): Promise<void>
     scanPdkDirectory(path: string): Promise<ScannedPdkDirectory>
     scanRtlDirectory(path: string): Promise<ScannedRtlDirectory>
     listDesignFiles(): Promise<WorkspaceDesignFileEntry[]>
@@ -200,8 +250,8 @@ export interface DesktopApi {
       listener: (event: DesktopProjectFileChangedEvent) => void,
     ): Promise<DesktopEventUnsubscribe>
   }
-  layoutViewer: {
-    open(request: LayoutViewerOpenRequest): Promise<LayoutViewerOpenResult>
+  chipViewer: {
+    open(request: ChipViewerOpenRequest): Promise<ChipViewerOpenResult>
   }
   workspaceResources: {
     getIndex(): Promise<WorkspaceResourceIndex>
@@ -227,10 +277,7 @@ export interface DesktopApi {
     refreshRegistry(): Promise<{ status: string; tools_count: number }>
     onProgress(listener: (event: ResourceJob) => void): DesktopEventUnsubscribe
   }
-  cli: {
-    execute(request: DesktopCliCommandRequest): Promise<DesktopCliCommandResult>
-    onEvent(listener: (event: DesktopCliCommandEvent) => void): DesktopEventUnsubscribe
-  }
+  ecc: EccRuntimeApi
   shell: {
     createSession(options: DesktopShellSessionOptions): Promise<DesktopShellSession>
     write(sessionId: string, data: string): Promise<void>

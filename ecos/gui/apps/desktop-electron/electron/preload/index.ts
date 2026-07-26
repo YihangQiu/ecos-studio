@@ -5,16 +5,16 @@ import {
 } from '../../../../packages/shared/src/constants/ipcChannels.ts'
 import type {
   DesktopApi,
-  DesktopCliCommandEvent,
-  DesktopCliCommandRequest,
   DesktopDirectoryDialogOptions,
+  EccRuntimeEvent,
   DesktopFileDialogOptions,
   DesktopRtlSourceDialogOptions,
-  LayoutViewerOpenRequest,
+  ChipViewerOpenRequest,
   DesktopMenuEventId,
   DesktopProjectFileChangedEvent,
   DesktopProjectLogTailEvent,
   RemoteContentReadJsonFileRequest,
+  ProjectManifestMutationRequest,
   ResourceJob,
   ResourceImportLocalRequest,
   ResourceInstallRequest,
@@ -83,6 +83,7 @@ const desktopApi: DesktopApi = {
     confirmClose: () => invokeDesktop(desktopApiIpcChannels.windowConfirmClose),
     setTitle: (title) => invokeDesktop(desktopApiIpcChannels.windowSetTitle, title),
     isMaximized: () => invokeDesktop(desktopApiIpcChannels.windowIsMaximized),
+    create: (options) => invokeDesktop(desktopApiIpcChannels.windowCreate, options),
     onCloseRequested: (listener) =>
       subscribeToDesktopEvent(desktopApiEventChannels.windowCloseRequested, () => {
         listener()
@@ -107,6 +108,8 @@ const desktopApi: DesktopApi = {
           listener(action as DesktopMenuEventId)
         },
       ),
+    setActionEnabled: (action, enabled) =>
+      invokeDesktop(desktopApiIpcChannels.menuSetActionEnabled, action, enabled),
   },
   system: {
     openExternal: (url) => invokeDesktop(desktopApiIpcChannels.systemOpenExternal, url),
@@ -125,17 +128,28 @@ const desktopApi: DesktopApi = {
     readJsonFile: <T = unknown>(request: RemoteContentReadJsonFileRequest) =>
       invokeDesktop<T>(desktopApiIpcChannels.remoteContentReadJsonFile, request),
   },
+  projectManifest: {
+    mutate: (request: ProjectManifestMutationRequest) =>
+      invokeDesktop(desktopApiIpcChannels.projectManifestMutate, request),
+  },
   dialog: {
     pickDirectory: (options?: DesktopDirectoryDialogOptions) =>
       invokeDesktop(desktopApiIpcChannels.dialogPickDirectory, options),
     pickFiles: (options?: DesktopFileDialogOptions) =>
       invokeDesktop(desktopApiIpcChannels.dialogPickFiles, options),
+    saveFile: (options) => invokeDesktop(desktopApiIpcChannels.dialogSaveFile, options),
     pickRtlSources: (options?: DesktopRtlSourceDialogOptions) =>
       invokeDesktop(desktopApiIpcChannels.dialogPickRtlSources, options),
   },
   workspace: {
     isProjectDirectory: (path) =>
       invokeDesktop(desktopApiIpcChannels.workspaceIsProjectDirectory, path),
+    openOrFocus: (path) =>
+      invokeDesktop(desktopApiIpcChannels.workspaceOpenOrFocus, path),
+    bindWindow: (path) => invokeDesktop(desktopApiIpcChannels.workspaceBindWindow, path),
+    unbindWindow: (path) =>
+      invokeDesktop(desktopApiIpcChannels.workspaceUnbindWindow, path),
+    getBoundPath: () => invokeDesktop(desktopApiIpcChannels.workspaceGetBoundPath),
     registerProjectRoot: (path) =>
       invokeDesktop(desktopApiIpcChannels.workspaceRegisterProjectRoot, path),
     clearProjectRoot: () =>
@@ -195,6 +209,28 @@ const desktopApi: DesktopApi = {
       invokeDesktop(desktopApiIpcChannels.workspaceReadProjectBinaryFile, path),
     writeProjectTextFile: (path, content) =>
       invokeDesktop(desktopApiIpcChannels.workspaceWriteProjectTextFile, path, content),
+    listProjectDirectory: (path) =>
+      invokeDesktop(desktopApiIpcChannels.workspaceListProjectDirectory, path),
+    prepareProjectDirectoryReplacement: (path) =>
+      invokeDesktop(
+        desktopApiIpcChannels.workspacePrepareProjectDirectoryReplacement,
+        path,
+      ),
+    restoreProjectDirectoryReplacement: (replacementId) =>
+      invokeDesktop(
+        desktopApiIpcChannels.workspaceRestoreProjectDirectoryReplacement,
+        replacementId,
+      ),
+    finalizeProjectDirectoryReplacement: (replacementId) =>
+      invokeDesktop(
+        desktopApiIpcChannels.workspaceFinalizeProjectDirectoryReplacement,
+        replacementId,
+      ),
+    retainProjectDirectoryReplacement: (replacementId) =>
+      invokeDesktop(
+        desktopApiIpcChannels.workspaceRetainProjectDirectoryReplacement,
+        replacementId,
+      ),
     scanPdkDirectory: (path) =>
       invokeDesktop(desktopApiIpcChannels.workspaceScanPdkDirectory, path),
     scanRtlDirectory: (path) =>
@@ -230,9 +266,9 @@ const desktopApi: DesktopApi = {
       }
     },
   },
-  layoutViewer: {
-    open: (request: LayoutViewerOpenRequest) =>
-      invokeDesktop(desktopApiIpcChannels.layoutViewerOpen, request),
+  chipViewer: {
+    open: (request: ChipViewerOpenRequest) =>
+      invokeDesktop(desktopApiIpcChannels.chipViewerOpen, request),
   },
   workspaceResources: {
     getIndex: () => invokeDesktop(desktopApiIpcChannels.workspaceResourcesGetIndex),
@@ -273,16 +309,43 @@ const desktopApi: DesktopApi = {
         },
       ),
   },
-  cli: {
-    execute: (request: DesktopCliCommandRequest) =>
-      invokeDesktop(desktopApiIpcChannels.cliExecute, request),
-    onEvent: (listener) =>
-      subscribeToDesktopEvent(
-        desktopApiEventChannels.cliEvent,
-        (_event, payload: unknown) => {
-          listener(payload as DesktopCliCommandEvent)
-        },
-      ),
+  ecc: {
+    events: {
+      onEvent: (listener) =>
+        subscribeToDesktopEvent(
+          desktopApiEventChannels.eccEvent,
+          (_event, payload: unknown) => {
+            listener(payload as EccRuntimeEvent)
+          },
+        ),
+    },
+    flow: {
+      run: (request) => invokeDesktop(desktopApiIpcChannels.eccFlowRun, request),
+      runStep: (request) => invokeDesktop(desktopApiIpcChannels.eccFlowRunStep, request),
+    },
+    rpc: {
+      hello: () => invokeDesktop(desktopApiIpcChannels.eccRpcHello),
+      ping: () => invokeDesktop(desktopApiIpcChannels.eccRpcPing),
+      shutdown: () => invokeDesktop(desktopApiIpcChannels.eccRpcShutdown),
+    },
+    workspace: {
+      close: (request) => invokeDesktop(desktopApiIpcChannels.eccWorkspaceClose, request),
+      create: (request) =>
+        invokeDesktop(desktopApiIpcChannels.eccWorkspaceCreate, request),
+      exportSignoff: (request) =>
+        invokeDesktop(desktopApiIpcChannels.eccWorkspaceExportSignoff, request),
+      inspectSignoff: (request) =>
+        invokeDesktop(desktopApiIpcChannels.eccWorkspaceInspectSignoff, request),
+      home: (request) => invokeDesktop(desktopApiIpcChannels.eccWorkspaceHome, request),
+      info: (request) => invokeDesktop(desktopApiIpcChannels.eccWorkspaceInfo, request),
+      open: (request) => invokeDesktop(desktopApiIpcChannels.eccWorkspaceOpen, request),
+      refreshConfig: (request) =>
+        invokeDesktop(desktopApiIpcChannels.eccWorkspaceRefreshConfig, request),
+      resetFlow: (request) =>
+        invokeDesktop(desktopApiIpcChannels.eccWorkspaceResetFlow, request),
+      syncConfig: (request) =>
+        invokeDesktop(desktopApiIpcChannels.eccWorkspaceSyncConfig, request),
+    },
   },
   shell: {
     createSession: (options: DesktopShellSessionOptions) =>

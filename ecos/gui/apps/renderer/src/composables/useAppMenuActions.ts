@@ -2,24 +2,33 @@ import { appMenuActionIds, type AppMenuAction } from '@ecos-studio/shared'
 import { useMenuEvents } from './useMenuEvents'
 
 interface AppMenuActionDependencies {
+  createWindow?(): Promise<void> | void
   navigateToWorkspace(): void
   openDocumentation(): Promise<void>
   openProject(): Promise<boolean | undefined>
+  exportSignoffPackage?(): void | Promise<void>
+  reconfigureWorkspace?(): void | Promise<void>
   showAboutDialog(): void
   showNewProjectWizard(): void
   manageDesignFiles?(): void | Promise<void>
 }
 
 export function useAppMenuActions({
+  createWindow,
   navigateToWorkspace,
   openDocumentation,
   openProject,
+  exportSignoffPackage,
+  reconfigureWorkspace,
   showAboutDialog,
   showNewProjectWizard,
   manageDesignFiles,
 }: AppMenuActionDependencies) {
   const handleMenuAction = async (action: AppMenuAction) => {
     switch (action) {
+      case appMenuActionIds.newWindow:
+        await createWindow?.()
+        break
       case appMenuActionIds.newProject:
         showNewProjectWizard()
         break
@@ -30,6 +39,12 @@ export function useAppMenuActions({
         break
       case appMenuActionIds.manageDesignFiles:
         await manageDesignFiles?.()
+        break
+      case appMenuActionIds.reconfigureWorkspace:
+        await reconfigureWorkspace?.()
+        break
+      case appMenuActionIds.exportSignoffPackage:
+        await exportSignoffPackage?.()
         break
       case appMenuActionIds.documentation:
         await openDocumentation()
@@ -46,6 +61,9 @@ export function useAppMenuActions({
     [appMenuActionIds.documentation]: () => {
       void handleMenuAction(appMenuActionIds.documentation)
     },
+    [appMenuActionIds.newWindow]: () => {
+      void handleMenuAction(appMenuActionIds.newWindow)
+    },
     [appMenuActionIds.newProject]: () => {
       void handleMenuAction(appMenuActionIds.newProject)
     },
@@ -57,6 +75,12 @@ export function useAppMenuActions({
     },
     [appMenuActionIds.manageDesignFiles]: () => {
       void handleMenuAction(appMenuActionIds.manageDesignFiles)
+    },
+    [appMenuActionIds.reconfigureWorkspace]: () => {
+      void handleMenuAction(appMenuActionIds.reconfigureWorkspace)
+    },
+    [appMenuActionIds.exportSignoffPackage]: () => {
+      void handleMenuAction(appMenuActionIds.exportSignoffPackage)
     },
   })
 

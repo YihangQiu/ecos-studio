@@ -100,7 +100,7 @@ const desktopBridge = {
   app: {
     getVersions: async () => ({
       gui: '0.1.0-alpha.4',
-      runtime: 'ECC CLI',
+      runtime: 'ECC RPC',
       ecc: 'unknown',
       dreamplace: 'unknown',
     }),
@@ -110,6 +110,7 @@ const desktopBridge = {
     toggleMaximize: async () => undefined,
     close: async () => undefined,
     confirmClose: async () => undefined,
+    create: async () => undefined,
     setTitle: async (_title: string) => undefined,
     isMaximized: async () => false,
     onCloseRequested: () => () => undefined,
@@ -118,6 +119,7 @@ const desktopBridge = {
   },
   menu: {
     onAction: () => () => undefined,
+    setActionEnabled: async () => undefined,
   },
   system: {
     openExternal: async (_url: string) => undefined,
@@ -134,12 +136,20 @@ const desktopBridge = {
     readTextFile: async () => '',
     readJsonFile: async <T = unknown>() => null as T,
   },
+  projectManifest: {
+    mutate: async () => ({ content: '' }),
+  },
   dialog: {
     pickDirectory,
     pickFiles: async () => null,
     pickRtlSources: async () => null,
+    saveFile: async () => null,
   },
   workspace: {
+    openOrFocus: async () => ({ action: 'proceed' as const }),
+    bindWindow: async (path: string) => path,
+    unbindWindow: async () => undefined,
+    getBoundPath: async () => null,
     isProjectDirectory: async () => false,
     registerProjectRoot: async (path: string) => path,
     clearProjectRoot: async () => undefined,
@@ -149,15 +159,17 @@ const desktopBridge = {
     readProjectTextFileTail: async () => null,
     readProjectBinaryFile: async () => new Uint8Array(),
     writeProjectTextFile: async () => undefined,
+    listProjectDirectory: async () => [],
+    prepareProjectDirectoryReplacement: async () => null,
+    restoreProjectDirectoryReplacement: async () => undefined,
+    finalizeProjectDirectoryReplacement: async () => undefined,
+    retainProjectDirectoryReplacement: async () => undefined,
     scanPdkDirectory,
     scanRtlDirectory,
     watchProjectFile: async () => () => undefined,
     listDesignFiles: async () => [],
     addDesignFiles: async () => ({ added: [], skipped: [] }),
     removeDesignFile: async () => null,
-  },
-  layoutViewer: {
-    open: async () => ({ layoutPackagePath: '', packageRoot: '', spawned: true }),
   },
   workspaceResources: {
     getIndex: async () => ({
@@ -213,15 +225,42 @@ const desktopBridge = {
     refreshRegistry: async () => ({ status: 'refreshed', tools_count: 0 }),
     onProgress: () => () => undefined,
   },
-  cli: {
-    execute: async (request) => ({
-      cmd: request.cmd,
-      data: {},
-      message: [],
-      ok: true,
-      response: 'success',
-    }),
-    onEvent: () => () => undefined,
+  ecc: {
+    events: {
+      onEvent: () => () => undefined,
+    },
+    flow: {
+      run: async (request) => ({ rerun: Boolean(request.rerun) }),
+      runStep: async (request) => ({ state: 'Success', step: request.step }),
+    },
+    rpc: {
+      hello: async () => ({ capabilities: [], eccVersion: 'unknown', version: 1 }),
+      ping: async () => ({ ok: true }),
+      shutdown: async () => ({ ok: true }),
+    },
+    workspace: {
+      close: async () => ({ ok: true }),
+      create: async (request) => ({
+        directory: request.directory,
+        workspaceHandle: 'workspace-handle-1',
+      }),
+      exportSignoff: async (request) => ({ outputPath: request.outputPath }),
+      inspectSignoff: async () => ({ groups: [], risks: [], status: 'ready' as const }),
+      home: async () => ({ path: '' }),
+      info: async (request) => ({ id: request.id, info: {}, step: request.step }),
+      open: async (request) => ({
+        directory: request.directory,
+        workspaceHandle: 'workspace-handle-1',
+      }),
+      refreshConfig: async () => ({ directory: '', refreshed: true }),
+      resetFlow: async () => ({ directory: '' }),
+      syncConfig: async (request) => ({
+        configPath: request.configPath,
+        directory: '',
+        parametersChanged: false,
+        refreshed: true,
+      }),
+    },
   },
   shell: {
     createSession: async () => ({
@@ -234,6 +273,13 @@ const desktopBridge = {
     kill: async () => undefined,
     onData: () => () => undefined,
     onExit: () => () => undefined,
+  },
+  chipViewer: {
+    open: async () => ({
+      geometryManifestPath: '/tmp/geometry/geometry.manifest',
+      spawned: true,
+      workspaceStepDirectory: '/tmp/Floorplan_ecc',
+    }),
   },
 } satisfies DesktopApi
 
@@ -339,7 +385,7 @@ describe('usePdkManager', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 
-  it('syncs persisted imported PDKs into the resource manager manifest during load', async () => {
+  it('syncs and refreshes persisted imported PDKs during load', async () => {
     settingsGet.mockResolvedValueOnce([
       {
         id: 'local-ics55',
@@ -349,14 +395,46 @@ describe('usePdkManager', () => {
         techNode: '55nm',
         pdkId: 'ics55',
         importedAt: '2026-05-14T00:00:00Z',
+        detectedFiles: {
+          directories: ['IP', 'prtech'],
+          files: [],
+        },
       },
     ])
+    scanPdkDirectory.mockResolvedValueOnce({
+      ...scannedPdk,
+      canonicalPath: '/tmp/pdks/ics55',
+      detectedFiles: {
+        directories: ['IP', 'IP/STD_cell', 'prtech', 'prtech/techLEF'],
+        files: [
+          'IP/STD_cell/ics55_LLSC_H7CH/lef/ics55_LLSC_H7CH.lef',
+          'IP/STD_cell/ics55_LLSC_H7CH/liberty/ics55_LLSC_H7CH_typ.lib',
+          'prtech/techLEF/N551P6M.lef',
+        ],
+      },
+    })
 
     const { loadPdks, importedPdks } = usePdkManager()
     await loadPdks()
 
-    expect(importedPdks.value).toHaveLength(1)
+    expect(scanPdkDirectory).toHaveBeenCalledWith('/tmp/pdks/ics55')
     expect(importPdkPath).toHaveBeenCalledWith({ path: '/tmp/pdks/ics55' })
+    expect(importedPdks.value).toHaveLength(1)
+    expect(importedPdks.value[0]?.detectedFiles?.files).toEqual([
+      'IP/STD_cell/ics55_LLSC_H7CH/lef/ics55_LLSC_H7CH.lef',
+      'IP/STD_cell/ics55_LLSC_H7CH/liberty/ics55_LLSC_H7CH_typ.lib',
+      'prtech/techLEF/N551P6M.lef',
+    ])
+    expect(settingsSet).toHaveBeenCalledWith(
+      'imported_pdks',
+      expect.arrayContaining([
+        expect.objectContaining({
+          detectedFiles: expect.objectContaining({
+            files: expect.arrayContaining(['prtech/techLEF/N551P6M.lef']),
+          }),
+        }),
+      ]),
+    )
   })
 
   it('imports a row-bound PDK through the local resource API and persists it for project creation', async () => {

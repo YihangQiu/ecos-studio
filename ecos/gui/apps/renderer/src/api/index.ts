@@ -5,6 +5,7 @@
 export { waitForRuntimeReady, type WaitForRuntimeReadyOptions } from './client'
 
 export {
+  closeWorkspaceApi,
   loadWorkspaceApi,
   createWorkspaceApi,
   type ProjectInfo,

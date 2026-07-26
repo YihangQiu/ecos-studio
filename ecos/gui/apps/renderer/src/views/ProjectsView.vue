@@ -1,420 +1,1825 @@
 <template>
-  <div class="relative flex h-full w-full flex-col overflow-hidden text-(--text-primary)">
-    <div class="relative z-10 mx-auto flex h-full w-full max-w-5xl flex-col px-8 py-6">
-      <!-- Header -->
-      <div class="mb-6 flex shrink-0 items-center justify-between">
-        <div class="flex items-center gap-4">
-          <button
-            @click="goBack"
-            class="flex cursor-pointer items-center gap-2 rounded-lg border border-(--border-color) bg-(--bg-secondary) px-3 py-2 text-sm text-(--text-secondary) transition-all duration-200 hover:border-(--accent-color) hover:text-(--accent-color)"
-          >
-            <i class="ri-arrow-left-line"></i>
-            <span>ECOS</span>
-          </button>
-          <h1 class="text-xl font-semibold">Project Management</h1>
-          <span class="text-sm text-(--text-secondary)"
-            >{{ filteredProjects.length }} projects</span
-          >
-        </div>
-      </div>
-
-      <!-- Filter & Sort bar -->
-      <div class="mb-4 flex shrink-0 flex-wrap items-center gap-3">
-        <!-- PDK filter -->
-        <select
-          v-model="filterPdk"
-          class="cursor-pointer rounded-lg border border-(--border-color) bg-(--bg-secondary) px-3 py-2 text-sm text-(--text-primary) transition-colors focus:border-(--accent-color) focus:outline-none"
-        >
-          <option value="">All PDKs</option>
-          <option v-for="pdk in availablePdks" :key="pdk" :value="pdk">{{ pdk }}</option>
-        </select>
-
-        <!-- Status filter -->
-        <select
-          v-model="filterStatus"
-          class="cursor-pointer rounded-lg border border-(--border-color) bg-(--bg-secondary) px-3 py-2 text-sm text-(--text-primary) transition-colors focus:border-(--accent-color) focus:outline-none"
-        >
-          <option value="">All Status</option>
-          <option value="success">Success</option>
-          <option value="failed">Failed</option>
-          <option value="running">Running</option>
-          <option value="in_progress">In Progress</option>
-          <option value="not_started">Not Started</option>
-        </select>
-
-        <!-- Search -->
-        <div class="relative min-w-[200px] flex-1">
-          <i
-            class="ri-search-line absolute top-1/2 left-3 -translate-y-1/2 text-sm text-(--text-secondary)"
-          ></i>
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="Search projects..."
-            class="w-full rounded-lg border border-(--border-color) bg-(--bg-secondary) py-2 pr-3 pl-9 text-sm text-(--text-primary) transition-colors placeholder:text-(--text-secondary)/50 focus:border-(--accent-color) focus:outline-none"
-          />
-        </div>
-
-        <!-- Sort -->
-        <select
-          v-model="sortBy"
-          class="cursor-pointer rounded-lg border border-(--border-color) bg-(--bg-secondary) px-3 py-2 text-sm text-(--text-primary) transition-colors focus:border-(--accent-color) focus:outline-none"
-        >
-          <option value="lastModified">Last Modified</option>
-          <option value="name">Name</option>
-          <option value="status">Status</option>
-          <option value="progress">Progress</option>
-        </select>
-      </div>
-
-      <!-- Project list -->
+  <div class="resource-manager-view">
+    <section
+      class="manager-dialog"
+      :class="{ maximized: isDialogMaximized }"
+      aria-labelledby="project-manager-title"
+    >
       <div
-        class="scrollbar-thin flex-1 space-y-3 overflow-y-auto pb-4"
-        v-if="filteredProjects.length > 0"
+        class="manager-window-controls"
+        aria-label="Project management window controls"
       >
-        <div
-          v-for="project in filteredProjects"
-          :key="project.id"
-          class="group flex items-start gap-4 rounded-xl border bg-(--bg-secondary) px-5 py-4 transition-all duration-200"
-          :class="
-            project.workspaceRecognized === false
-              ? 'cursor-default border-(--border-color) opacity-50'
-              : 'cursor-pointer border-(--border-color) hover:border-(--accent-color) hover:shadow-md'
+        <button
+          type="button"
+          class="manager-window-button"
+          :aria-label="
+            isDialogMaximized
+              ? 'Restore project management window'
+              : 'Maximize project management window'
           "
-          @click="project.workspaceRecognized !== false && handleOpen(project)"
+          :title="isDialogMaximized ? 'Restore' : 'Maximize'"
+          @click="toggleDialogMaximized"
         >
-          <!-- Status icon -->
-          <div
-            class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
-            :class="statusIconBgClass(project.status)"
-          >
-            <i
-              :class="[
-                statusIcon(project.status),
-                statusIconColorClass(project.status),
-                'text-lg',
-              ]"
-              :style="
-                project.status === 'running' ? 'animation: spin 2s linear infinite' : ''
-              "
-            ></i>
-          </div>
+          <i
+            :class="
+              isDialogMaximized ? 'ri-collapse-diagonal-line' : 'ri-expand-diagonal-line'
+            "
+          ></i>
+        </button>
+        <button
+          type="button"
+          class="manager-window-button"
+          aria-label="Close project management"
+          title="Close"
+          @click="goBack"
+        >
+          <i class="ri-close-line"></i>
+        </button>
+      </div>
 
-          <!-- Project info -->
-          <div class="min-w-0 flex-1">
-            <!-- Row 1: Name + badges -->
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="truncate font-medium text-(--text-primary)">{{
-                project.name
-              }}</span>
-              <span
-                v-if="project.status"
-                :class="statusBadgeClass(project.status)"
-                class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
-              >
-                {{ statusLabel(project.status) }}
-              </span>
-              <span
-                v-if="project.pdk"
-                class="shrink-0 rounded bg-(--accent-color)/10 px-1.5 py-0.5 text-[10px] font-medium text-(--accent-color)"
-              >
-                {{ project.pdk }}
-              </span>
-              <span
-                v-if="project.workspaceRecognized === false"
-                class="shrink-0 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400"
-              >
-                Workspace not recognized
-              </span>
+      <header class="manager-header">
+        <div>
+          <h1 id="project-manager-title">Project Management</h1>
+        </div>
+      </header>
+
+      <div class="manager-grid">
+        <aside class="manager-sidebar" aria-label="Projects">
+          <div class="project-list-panel" aria-label="Projects">
+            <div class="project-list-toolbar">
+              <div class="resource-search sidebar-search">
+                <i class="ri-search-line"></i>
+                <input
+                  v-model="searchQuery"
+                  type="text"
+                  aria-label="Search projects or workspaces"
+                  placeholder="Search project or workspace"
+                />
+              </div>
+              <div class="project-list-actions">
+                <button
+                  type="button"
+                  class="project-toolbar-action"
+                  @click="importProject"
+                >
+                  <i class="ri-file-add-line" aria-hidden="true"></i>
+                  <span>Import</span>
+                </button>
+                <button
+                  type="button"
+                  class="project-toolbar-action primary"
+                  @click="openNewProjectDialog"
+                >
+                  <i class="ri-add-line" aria-hidden="true"></i>
+                  <span>New project</span>
+                </button>
+              </div>
             </div>
 
-            <!-- Row 2: Parameters -->
-            <div class="mt-1.5 flex items-center gap-4 text-xs text-(--text-secondary)">
-              <span v-if="project.topModule" class="flex items-center gap-1">
-                <i class="ri-code-s-slash-line text-[11px]"></i>
-                {{ project.topModule }}
-              </span>
-              <span v-if="project.frequencyTarget" class="flex items-center gap-1">
-                <i class="ri-speed-line text-[11px]"></i>
-                {{ project.frequencyTarget }}MHz
-              </span>
-              <span v-if="project.coreUtilization" class="flex items-center gap-1">
-                <i class="ri-layout-grid-line text-[11px]"></i>
-                {{ (project.coreUtilization * 100).toFixed(0) }}% util
-              </span>
-              <span v-if="project.cellCount" class="flex items-center gap-1">
-                <i class="ri-apps-line text-[11px]"></i>
-                {{ project.cellCount.toLocaleString() }} cells
-              </span>
-              <span v-if="project.totalRuntime" class="flex items-center gap-1">
-                <i class="ri-timer-line text-[11px]"></i>
-                {{ project.totalRuntime }}
-              </span>
-            </div>
-
-            <!-- Row 3: Progress bar + path -->
-            <div class="mt-2 flex items-center gap-3">
-              <div
-                v-if="project.totalSteps && project.totalSteps > 0"
-                class="flex min-w-0 flex-1 items-center gap-2"
+            <div
+              class="project-list"
+              :class="{
+                'project-list--popover-open': Boolean(popoverWorkspaceId),
+              }"
+              aria-label="Project list"
+            >
+              <article
+                v-for="project in visibleProjectCards"
+                :key="project.source.id"
+                class="project-workspace-tree"
+                :class="{
+                  selected: project.model.id === selectedProjectId,
+                  collapsed:
+                    project.model.id === selectedProjectId &&
+                    !projectWorkspaceListExpanded(project.model.id),
+                }"
               >
+                <div class="project-tree-row-shell">
+                  <button
+                    v-if="
+                      project.model.id === selectedProjectId &&
+                      project.model.workspaces.length > 0
+                    "
+                    type="button"
+                    class="circle-action project-collapse-toggle"
+                    :aria-expanded="projectWorkspaceListExpanded(project.model.id)"
+                    :aria-controls="projectWorkspaceListId(project.model.id)"
+                    :aria-label="
+                      projectWorkspaceListExpanded(project.model.id)
+                        ? `Collapse workspaces for ${project.model.name}`
+                        : `Expand workspaces for ${project.model.name}`
+                    "
+                    :title="
+                      projectWorkspaceListExpanded(project.model.id)
+                        ? 'Collapse workspaces'
+                        : 'Expand workspaces'
+                    "
+                    @click="toggleProjectWorkspaceList(project.model.id)"
+                  >
+                    <i
+                      :class="
+                        projectWorkspaceListExpanded(project.model.id)
+                          ? 'ri-arrow-down-s-line'
+                          : 'ri-arrow-right-s-line'
+                      "
+                      aria-hidden="true"
+                    ></i>
+                  </button>
+                  <span
+                    v-else
+                    class="project-tree-disclosure-spacer"
+                    aria-hidden="true"
+                  ></span>
+                  <button
+                    type="button"
+                    class="resource-row project-tree-row mockup-project-row"
+                    :class="{ selected: project.model.id === selectedProjectId }"
+                    :aria-pressed="project.model.id === selectedProjectId"
+                    @click="selectProject(project.model.id)"
+                  >
+                    <span class="resource-icon">
+                      <i class="ri-layout-grid-line" aria-hidden="true"></i>
+                    </span>
+                    <span class="resource-copy">
+                      <strong>{{ project.model.name }}</strong>
+                      <small>{{
+                        workspaceCountLabel(project.model.workspaces.length)
+                      }}</small>
+                    </span>
+                  </button>
+                  <div
+                    class="project-tree-actions"
+                    :aria-label="`Actions for ${project.model.name}`"
+                  >
+                    <button
+                      type="button"
+                      class="row-primary-action"
+                      :aria-label="`New workspace in ${project.model.name}`"
+                      @click="createWorkspaceForProject(project.model)"
+                    >
+                      <i class="ri-add-line" aria-hidden="true"></i>
+                      <span>New</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="circle-action row-action-menu-trigger"
+                      :aria-expanded="projectActionMenuId === project.model.id"
+                      :aria-label="`More actions for ${project.model.name}`"
+                      aria-haspopup="menu"
+                      @click="toggleProjectActionMenu(project.model.id)"
+                    >
+                      <i class="ri-more-2-fill" aria-hidden="true"></i>
+                    </button>
+                    <div
+                      v-if="projectActionMenuId === project.model.id"
+                      class="row-action-menu"
+                      role="group"
+                      :aria-label="`More actions for ${project.model.name}`"
+                    >
+                      <button
+                        type="button"
+                        class="row-action-menu-item"
+                        @click="importWorkspaceIntoProject(project.model)"
+                      >
+                        <i class="ri-file-add-line" aria-hidden="true"></i>
+                        <span>Import workspace</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="row-action-menu-item danger"
+                        @click="requestDeleteProject(project.source)"
+                      >
+                        <i class="ri-delete-bin-line" aria-hidden="true"></i>
+                        <span>Remove project</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div
-                  class="h-1.5 max-w-[200px] flex-1 overflow-hidden rounded-full bg-(--bg-primary)"
+                  v-if="
+                    projectWorkspaceListExpanded(project.model.id) &&
+                    project.model.workspaces.length > 0
+                  "
+                  :id="projectWorkspaceListId(project.model.id)"
+                  class="workspace-tree-list"
+                  :class="{
+                    'has-preview-control': workspaceListCanToggle(project.model),
+                  }"
+                  aria-label="Project workspaces"
                 >
                   <div
-                    class="h-full rounded-full transition-all duration-300"
-                    :class="progressBarColor(project.status)"
-                    :style="{
-                      width: `${((project.completedSteps || 0) / project.totalSteps) * 100}%`,
-                    }"
-                  ></div>
+                    v-for="workspace in visibleProjectWorkspaces(project.model)"
+                    :key="workspace.id"
+                    class="workspace-tree-item"
+                    :class="flowStatusHintClass(workspace.flowStatusHint.state)"
+                    :style="workspaceDepthStyle(workspace)"
+                  >
+                    <div class="workspace-tree-row-shell">
+                      <button
+                        type="button"
+                        class="workspace-tree-row"
+                        :class="{ selected: workspace.id === selectedWorkspaceId }"
+                        :aria-pressed="workspace.id === selectedWorkspaceId"
+                        @click="selectWorkspace(workspace.id)"
+                      >
+                        <span class="workspace-tree-copy">
+                          <strong>{{ workspace.id }}</strong>
+                          <small
+                            >{{ workspace.startStep }} -> {{ workspace.endStep }}</small
+                          >
+                          <em v-if="workspace.sourceWorkspaceId"
+                            >from {{ workspace.sourceWorkspaceId }} /
+                            {{ workspace.branchStep }}</em
+                          >
+                        </span>
+                        <span
+                          class="workspace-flow-hint"
+                          :class="flowStatusHintClass(workspace.flowStatusHint.state)"
+                        >
+                          {{ workspace.flowStatusHint.label }}
+                        </span>
+                      </button>
+                      <div
+                        class="workspace-tree-actions"
+                        :aria-label="`Actions for ${workspace.id}`"
+                      >
+                        <button
+                          type="button"
+                          class="row-primary-action"
+                          :aria-label="`Open workspace ${workspace.id}`"
+                          @click="openWorkspace(workspace)"
+                        >
+                          <i class="ri-arrow-right-up-line" aria-hidden="true"></i>
+                          <span>Open</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="circle-action row-action-menu-trigger"
+                          :aria-expanded="workspaceActionMenuId === workspace.id"
+                          :aria-label="`More actions for ${workspace.id}`"
+                          aria-haspopup="menu"
+                          @click="toggleWorkspaceActionMenu(workspace.id)"
+                        >
+                          <i class="ri-more-2-fill" aria-hidden="true"></i>
+                        </button>
+                        <div
+                          v-if="workspaceActionMenuId === workspace.id"
+                          class="row-action-menu"
+                          role="group"
+                          :aria-label="`More actions for ${workspace.id}`"
+                        >
+                          <button
+                            type="button"
+                            class="row-action-menu-item workspace-flow-trigger"
+                            @click="toggleWorkspaceFlowPopover(workspace.id)"
+                          >
+                            <i class="ri-git-branch-line" aria-hidden="true"></i>
+                            <span>Create from output</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="row-action-menu-item danger"
+                            @click="requestDeleteWorkspace(workspace.id)"
+                          >
+                            <i class="ri-delete-bin-line" aria-hidden="true"></i>
+                            <span>Delete workspace</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      v-if="
+                        popoverWorkspaceId === workspace.id && selectedPopoverWorkspace
+                      "
+                      class="workspace-flow-popover"
+                      :class="workspacePopoverPlacementClass(workspace.id)"
+                      role="dialog"
+                      aria-label="Workspace Flow Steps"
+                    >
+                      <header>
+                        <strong>Workspace Flow Steps</strong>
+                        <small
+                          >{{ selectedPopoverWorkspace.id }} ·
+                          {{ selectedPopoverWorkspace.startStep }} ->
+                          {{ selectedPopoverWorkspace.endStep }}</small
+                        >
+                      </header>
+                      <button
+                        v-for="cell in workspaceConfiguredSteps(selectedPopoverWorkspace)"
+                        :key="`${selectedPopoverWorkspace.id}-${cell.step}`"
+                        type="button"
+                        class="popover-step-row"
+                        :disabled="!cell.canCreateWorkspace"
+                        @click.stop="
+                          cell.canCreateWorkspace &&
+                          startWorkspaceFromPopoverStep(
+                            selectedPopoverWorkspace.id,
+                            cell.step,
+                          )
+                        "
+                      >
+                        <span>{{ cell.step }}</span>
+                        <em :class="stepStatusClass(cell.status)">{{ cell.label }}</em>
+                        <span v-if="cell.canCreateWorkspace" class="popover-step-add">
+                          <i class="ri-add-line"></i>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    v-if="workspaceListCanToggle(project.model)"
+                    type="button"
+                    class="list-preview-toggle workspace-list-preview-toggle"
+                    :aria-expanded="workspacePreviewShowsAll(project.model.id)"
+                    :aria-label="
+                      workspacePreviewShowsAll(project.model.id)
+                        ? `Show fewer workspaces in ${project.model.name}`
+                        : `Show all ${project.model.workspaces.length} workspaces in ${project.model.name}`
+                    "
+                    @click="toggleWorkspacePreview(project.model.id)"
+                  >
+                    <i
+                      :class="
+                        workspacePreviewShowsAll(project.model.id)
+                          ? 'ri-arrow-up-s-line'
+                          : 'ri-arrow-down-s-line'
+                      "
+                      aria-hidden="true"
+                    ></i>
+                    <span>{{
+                      workspacePreviewShowsAll(project.model.id)
+                        ? 'Show fewer workspaces'
+                        : `Show all ${project.model.workspaces.length} workspaces`
+                    }}</span>
+                  </button>
                 </div>
-                <span class="shrink-0 text-[11px] text-(--text-secondary)">
-                  {{ project.completedSteps || 0 }}/{{ project.totalSteps }}
-                </span>
+
+                <div
+                  v-else-if="
+                    projectWorkspaceListExpanded(project.model.id) &&
+                    project.model.id === selectedProjectId
+                  "
+                  class="workspace-tree-empty"
+                >
+                  <strong>No workspaces yet</strong>
+                  <span>Create a workspace or import one into this project.</span>
+                  <div class="empty-state-actions">
+                    <button
+                      type="button"
+                      class="empty-state-action primary"
+                      @click="createWorkspaceForProject(project.model)"
+                    >
+                      New workspace
+                    </button>
+                    <button
+                      type="button"
+                      class="empty-state-action"
+                      @click="importWorkspaceIntoProject(project.model)"
+                    >
+                      Import workspace
+                    </button>
+                  </div>
+                </div>
+              </article>
+
+              <button
+                v-if="projectListCanToggle"
+                type="button"
+                class="list-preview-toggle project-list-preview-toggle"
+                :aria-expanded="projectPreviewShowsAll"
+                :aria-label="
+                  projectPreviewShowsAll
+                    ? 'Show fewer projects'
+                    : `Show all ${projectCards.length} projects`
+                "
+                @click="projectPreviewShowsAll = !projectPreviewShowsAll"
+              >
+                <i
+                  :class="
+                    projectPreviewShowsAll ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'
+                  "
+                  aria-hidden="true"
+                ></i>
+                <span>{{
+                  projectPreviewShowsAll
+                    ? 'Show fewer projects'
+                    : `Show all ${projectCards.length} projects`
+                }}</span>
+              </button>
+
+              <div v-if="projectCards.length === 0" class="empty-state">
+                <template v-if="searchQuery.trim()">
+                  <i class="ri-search-line" aria-hidden="true"></i>
+                  <strong>No matching projects</strong>
+                  <span>Try another name, or clear the search to see all projects.</span>
+                  <div class="empty-state-actions">
+                    <button
+                      type="button"
+                      class="empty-state-action"
+                      @click="searchQuery = ''"
+                    >
+                      Clear search
+                    </button>
+                  </div>
+                </template>
+                <template v-else>
+                  <i class="ri-folder-chart-line" aria-hidden="true"></i>
+                  <strong>No projects yet</strong>
+                  <span
+                    >Import an existing project or create a new one to get started.</span
+                  >
+                  <div class="empty-state-actions">
+                    <button
+                      type="button"
+                      class="empty-state-action primary"
+                      @click="importProject"
+                    >
+                      Import Project
+                    </button>
+                    <button
+                      type="button"
+                      class="empty-state-action"
+                      @click="openNewProjectDialog"
+                    >
+                      New Project
+                    </button>
+                  </div>
+                </template>
               </div>
-              <span class="truncate font-mono text-[11px] text-(--text-secondary)">{{
-                project.path
-              }}</span>
             </div>
           </div>
+        </aside>
 
-          <!-- Right: time + actions -->
-          <div class="mt-1 flex shrink-0 items-center gap-2">
-            <span class="text-xs whitespace-nowrap text-(--text-secondary)">{{
-              formatDate(project.lastOpened)
-            }}</span>
-            <button
-              @click.stop="handleRemove(project.id)"
-              class="cursor-pointer rounded-lg p-1.5 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-500/10"
-              title="Remove from list"
-            >
-              <i
-                class="ri-close-line text-sm text-(--text-secondary) hover:text-red-500"
-              ></i>
-            </button>
+        <main class="manager-table-panel">
+          <div class="project-analysis-shell">
+            <ProjectAnalysisPanel
+              :project="selectedProject"
+              :selected-analysis-tab="selectedAnalysisTab"
+              :selected-step="selectedStep"
+              :selected-workspace-id="selectedWorkspaceId"
+              :selected-issue-metric="selectedIssueMetric"
+              @select-analysis-tab="handleAnalysisTabSelection"
+              @select-step="selectStep"
+              @select-workspace="selectWorkspace"
+              @select-issue-metric="selectIssueMetric"
+              @export-report="exportQorTrendReport"
+              @set-baseline="setQorBaseline"
+              @import-project="importProject"
+              @new-project="openNewProjectDialog"
+            />
           </div>
-        </div>
+        </main>
       </div>
+    </section>
 
-      <!-- Empty state -->
-      <div v-else class="flex flex-1 flex-col items-center justify-center text-center">
-        <i class="ri-folder-2-line mb-4 text-6xl text-(--text-secondary) opacity-20"></i>
-        <p class="mb-2 text-lg font-medium text-(--text-primary)">
-          {{ recentProjects.length === 0 ? 'No projects yet' : 'No matching projects' }}
-        </p>
-        <p class="mb-6 text-sm text-(--text-secondary)">
-          {{
-            recentProjects.length === 0
-              ? 'Create your first project from the Backend Design tool'
-              : 'Try adjusting your filters or search query'
-          }}
-        </p>
+    <div v-if="showNewProjectDialog" class="project-modal-scrim" role="presentation">
+      <section
+        ref="newProjectDialog"
+        class="project-modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-project-title"
+        @keydown="handleModalKeydown($event, 'new-project')"
+      >
         <button
-          v-if="recentProjects.length === 0"
-          @click="router.push('/ecc')"
-          class="flex cursor-pointer items-center gap-2 rounded-lg bg-(--accent-color)/10 px-5 py-2.5 text-sm font-medium text-(--accent-color) transition-colors hover:bg-(--accent-color)/20"
+          type="button"
+          class="manager-close modal-close"
+          aria-label="Close new project"
+          @click="closeNewProjectDialog"
         >
-          <i class="ri-cpu-line"></i>
-          Go to Backend Design
+          <i class="ri-close-line"></i>
         </button>
+        <header>
+          <p class="manager-eyebrow">Project root</p>
+          <h2 id="new-project-title">New Project</h2>
+        </header>
+
+        <label class="form-field">
+          <span>Project Name</span>
+          <input
+            v-model="projectRootDraft.name"
+            type="text"
+            placeholder="project_name"
+            data-dialog-initial-focus
+          />
+        </label>
+
+        <label class="form-field">
+          <span>Project Storage Location</span>
+          <div class="path-picker">
+            <input
+              v-model="projectRootDraft.directory"
+              type="text"
+              readonly
+              placeholder="/path/to/project_root"
+              @click="selectProjectStorageLocation"
+            />
+            <button type="button" @click="selectProjectStorageLocation">Browse</button>
+          </div>
+        </label>
+
+        <p class="modal-help">Project manifest: {{ projectManifestPreview }}</p>
+        <p v-if="projectRootError" class="modal-error">{{ projectRootError }}</p>
+
+        <footer class="modal-actions">
+          <button type="button" class="secondary-button" @click="closeNewProjectDialog">
+            Cancel
+          </button>
+          <button type="button" class="primary-button" @click="createProjectFolderDraft">
+            <i class="ri-check-line"></i>
+            <span>Create</span>
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="branchDraft" class="project-modal-scrim" role="presentation">
+      <section
+        ref="workspaceDraftDialog"
+        class="project-modal-dialog branch-draft-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="branch-draft-title"
+        @keydown="handleModalKeydown($event, 'workspace-draft')"
+      >
         <button
-          v-else
-          @click="clearFilters"
-          class="flex cursor-pointer items-center gap-2 rounded-lg bg-(--bg-secondary) px-5 py-2.5 text-sm text-(--text-secondary) transition-colors hover:text-(--text-primary)"
+          type="button"
+          class="manager-close modal-close"
+          aria-label="Close create workspace dialog"
+          @click="closeWorkspaceDraftDialog"
         >
-          <i class="ri-filter-off-line"></i>
-          Clear Filters
+          <i class="ri-close-line"></i>
         </button>
-      </div>
+        <header>
+          <p class="manager-eyebrow">Workspace branch</p>
+          <h2 id="branch-draft-title">Create Workspace</h2>
+          <p>{{ branchDraft.sourceWorkspaceId }} / {{ branchDraft.step }} output</p>
+        </header>
+
+        <code class="modal-path">{{ branchDraft.targetWorkspacePath }}</code>
+
+        <div class="branch-artifacts">
+          <strong>Input Artifacts</strong>
+          <dl>
+            <div>
+              <dt>Source output</dt>
+              <dd>{{ branchDraft.sourceOutputPath }}</dd>
+            </div>
+            <div v-if="branchDraft.originDef">
+              <dt>DEF</dt>
+              <dd>{{ branchDraft.originDef }}</dd>
+            </div>
+            <div v-if="branchDraft.originVerilog">
+              <dt>Verilog</dt>
+              <dd>{{ branchDraft.originVerilog }}</dd>
+            </div>
+            <div v-if="branchDraft.originSdc">
+              <dt>SDC</dt>
+              <dd>{{ branchDraft.originSdc }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <footer class="modal-actions">
+          <button
+            type="button"
+            class="secondary-button"
+            data-dialog-initial-focus
+            @click="closeWorkspaceDraftDialog"
+          >
+            Cancel
+          </button>
+          <button type="button" class="primary-button" @click="continueWorkspaceDraft">
+            <i class="ri-arrow-right-line"></i>
+            <span>Continue</span>
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="pendingDeleteWorkspaceId" class="project-modal-scrim" role="presentation">
+      <section
+        ref="deleteWorkspaceDialog"
+        class="project-modal-dialog confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-workspace-title"
+        @keydown="handleModalKeydown($event, 'delete-workspace')"
+      >
+        <button
+          type="button"
+          class="manager-close modal-close"
+          aria-label="Close delete workspace dialog"
+          @click="closeDeleteWorkspaceDialog"
+        >
+          <i class="ri-close-line"></i>
+        </button>
+        <header>
+          <p class="manager-eyebrow">Confirm delete</p>
+          <h2 id="delete-workspace-title">Delete Workspace</h2>
+        </header>
+        <p class="modal-help">
+          Remove {{ pendingDeleteWorkspaceId }} from project.json. Keep workspace data is
+          checked by default.
+        </p>
+        <label class="workspace-delete-option">
+          <input v-model="keepWorkspaceDataOnDelete" type="checkbox" />
+          <span>
+            <strong>Keep workspace data</strong>
+            <small v-if="keepWorkspaceDataOnDelete">
+              Workspace folder will remain at
+              {{ pendingDeleteWorkspace?.workspacePath || '-' }}.
+            </small>
+            <small v-else>
+              Workspace folder {{ pendingDeleteWorkspace?.workspacePath || '-' }} will be
+              deleted.
+            </small>
+          </span>
+        </label>
+        <p v-if="deleteWorkspaceError" class="modal-error" role="alert">
+          {{ deleteWorkspaceError }}
+        </p>
+        <footer class="modal-actions">
+          <button
+            type="button"
+            class="secondary-button"
+            data-dialog-initial-focus
+            @click="closeDeleteWorkspaceDialog"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="secondary-button danger"
+            @click="confirmDeleteWorkspace"
+          >
+            <i class="ri-delete-bin-line"></i>
+            <span>{{ deleteWorkspaceError ? 'Retry delete' : 'Delete' }}</span>
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="pendingDeleteProject" class="project-modal-scrim" role="presentation">
+      <section
+        ref="deleteProjectDialog"
+        class="project-modal-dialog confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="remove-project-title"
+        @keydown="handleModalKeydown($event, 'delete-project')"
+      >
+        <button
+          type="button"
+          class="manager-close modal-close"
+          aria-label="Close remove project dialog"
+          @click="closeDeleteProjectDialog"
+        >
+          <i class="ri-close-line"></i>
+        </button>
+        <header>
+          <p class="manager-eyebrow">Confirm removal</p>
+          <h2 id="remove-project-title">Remove from Project Management</h2>
+        </header>
+        <p class="modal-help">
+          Remove {{ pendingDeleteProject.name }} from this list? The project folder and
+          project.json on disk will be kept. Use Import Project to add it back later.
+        </p>
+        <footer class="modal-actions">
+          <button
+            type="button"
+            class="secondary-button"
+            data-dialog-initial-focus
+            @click="closeDeleteProjectDialog"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="secondary-button danger"
+            @click="confirmDeleteProject"
+          >
+            <i class="ri-subtract-line"></i>
+            <span>Remove</span>
+          </button>
+        </footer>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Project, ProjectStatus } from '../types'
 import { useWorkspace } from '../composables/useWorkspace'
+import ProjectAnalysisPanel from './project-management/ProjectAnalysisPanel.vue'
+import { previewList } from './project-management/projectListPreview'
+import {
+  readProjectWorkspaceAnalysisInputs,
+  readProjectWorkspaceFlowStates,
+} from './project-management/projectWorkspaceAnalysisData'
+import { waitForDesktopApi } from '@/platform/desktop'
+import { mutateProjectManifest } from '@/api/projectManifest'
+import {
+  FLOW_STEPS,
+  buildProjectManagementProject,
+  createWorkspaceBranchDraft,
+  resolveProjectSelectionUpdate,
+  nextWorkspaceId,
+  parseProjectManifest,
+  serializeProjectManifest,
+  setQorBaselineInManifest,
+  type FlowStep,
+  type ProjectFlowStatusHint,
+  type ProjectManifest,
+  type ProjectManagementProject,
+  type ProjectStepStatus,
+  type ProjectWorkspace,
+  type ProjectWorkspaceAnalysisInputsById,
+  type ProjectWorkspaceFlowStatesById,
+  type WorkspaceBranchDraft,
+} from '@/utils/projectManagement'
+import { readOptionalProjectTextFile, writeProjectTextFile } from '@/utils/projectFiles'
+import {
+  loadProjectHistory,
+  rememberProjectHistoryEntry,
+  removeProjectHistoryEntry,
+} from '@/utils/projectHistory'
+import { serializeProjectQorTrendReport } from '@/utils/projectQorTrend'
+
+type BranchDraft = WorkspaceBranchDraft
+type ModalId = 'new-project' | 'workspace-draft' | 'delete-workspace' | 'delete-project'
+type ProjectCard = { source: Project; model: ProjectManagementProject }
+
+const PROJECT_PREVIEW_LIMIT = 20
+const WORKSPACE_PREVIEW_LIMIT = 20
 
 const router = useRouter()
-const { recentProjects, openProject, removeRecentProject, loadRecentProjects } =
-  useWorkspace()
+const { openProject, showToast } = useWorkspace()
 
-const filterPdk = ref('')
-const filterStatus = ref('')
 const searchQuery = ref('')
-const sortBy = ref('lastModified')
+const selectedProjectId = ref<string | null>(null)
+const selectedWorkspaceId = ref('')
+const collapsedProjectIds = ref<Set<string>>(new Set())
+const workspacePreviewProjectIds = ref<Set<string>>(new Set())
+const projectPreviewShowsAll = ref(false)
+const selectedStep = ref<FlowStep>('DRC')
+const selectedIssueMetric = ref<string | null>(null)
+const selectedAnalysisTab = ref<'dashboard' | 'step'>('dashboard')
+const hasOpenedStepAnalysis = ref(false)
+const branchDraft = ref<BranchDraft | null>(null)
+const popoverWorkspaceId = ref('')
+const projectActionMenuId = ref<string | null>(null)
+const workspaceActionMenuId = ref<string | null>(null)
+const pendingDeleteWorkspaceId = ref<string | null>(null)
+const keepWorkspaceDataOnDelete = ref(true)
+const deleteWorkspaceError = ref('')
+const pendingDeleteProject = ref<Project | null>(null)
+const isDialogMaximized = ref(false)
+const projectHistory = ref<Project[]>([])
+const projectManifests = ref<Record<string, ProjectManifest>>({})
+const workspaceFlowStates = ref<Record<string, ProjectWorkspaceFlowStatesById>>({})
+const workspaceAnalysisInputs = ref<Record<string, ProjectWorkspaceAnalysisInputsById>>(
+  {},
+)
+const showNewProjectDialog = ref(false)
+const projectRootError = ref('')
+const projectRootDraft = ref({
+  name: '',
+  directory: '',
+})
+const newProjectDialog = ref<HTMLElement | null>(null)
+const workspaceDraftDialog = ref<HTMLElement | null>(null)
+const deleteWorkspaceDialog = ref<HTMLElement | null>(null)
+const deleteProjectDialog = ref<HTMLElement | null>(null)
+const modalFocusReturnTarget = ref<HTMLElement | null>(null)
 
 onMounted(async () => {
-  await loadRecentProjects()
+  document.addEventListener('pointerdown', handleWorkspacePopoverPointerDown)
+  document.addEventListener('keydown', handleWorkspacePopoverKeydown)
+  projectHistory.value = await loadProjectHistory()
+  await refreshProjectManifests()
+  if (!selectedProjectId.value)
+    selectedProjectId.value = projectCards.value[0]?.model.id ?? selectedProject.value.id
 })
 
-const availablePdks = computed(() => {
-  const pdks = new Set<string>()
-  for (const p of recentProjects.value) {
-    if (p.pdk) pdks.add(p.pdk)
-  }
-  return Array.from(pdks).sort()
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleWorkspacePopoverPointerDown)
+  document.removeEventListener('keydown', handleWorkspacePopoverKeydown)
 })
 
-const filteredProjects = computed(() => {
-  let result = [...recentProjects.value]
+const projectSources = computed<Project[]>(() => projectHistory.value)
 
-  if (filterPdk.value) {
-    result = result.filter((p) => p.pdk === filterPdk.value)
-  }
-  if (filterStatus.value) {
-    result = result.filter((p) => p.status === filterStatus.value)
-  }
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    result = result.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.path.toLowerCase().includes(q) ||
-        (p.topModule && p.topModule.toLowerCase().includes(q)),
-    )
-  }
+const activeModal = computed<ModalId | null>(() => {
+  if (showNewProjectDialog.value) return 'new-project'
+  if (branchDraft.value) return 'workspace-draft'
+  if (pendingDeleteWorkspaceId.value) return 'delete-workspace'
+  if (pendingDeleteProject.value) return 'delete-project'
+  return null
+})
 
-  result.sort((a, b) => {
-    switch (sortBy.value) {
-      case 'name':
-        return a.name.localeCompare(b.name)
-      case 'status': {
-        const order: Record<string, number> = {
-          success: 0,
-          running: 1,
-          in_progress: 2,
-          failed: 3,
-          not_started: 4,
-        }
-        return (
-          (order[a.status || 'not_started'] ?? 5) -
-          (order[b.status || 'not_started'] ?? 5)
-        )
-      }
-      case 'progress': {
-        const pa = a.totalSteps ? (a.completedSteps || 0) / a.totalSteps : 0
-        const pb = b.totalSteps ? (b.completedSteps || 0) / b.totalSteps : 0
-        return pb - pa
-      }
-      default:
-        return new Date(b.lastOpened).getTime() - new Date(a.lastOpened).getTime()
+watch(activeModal, async (modal, previousModal) => {
+  if (modal) {
+    if (!previousModal && document.activeElement instanceof HTMLElement) {
+      modalFocusReturnTarget.value = document.activeElement
     }
-  })
+    await nextTick()
+    focusInitialModalElement(modal)
+    return
+  }
 
-  return result
+  if (!previousModal) return
+  await nextTick()
+  const trigger = modalFocusReturnTarget.value
+  modalFocusReturnTarget.value = null
+  if (trigger?.isConnected) trigger.focus()
 })
 
-function clearFilters() {
-  filterPdk.value = ''
-  filterStatus.value = ''
-  searchQuery.value = ''
+const projectCards = computed<ProjectCard[]>(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  const cards = [...projectSources.value]
+    .sort(
+      (left, right) =>
+        new Date(right.lastOpened).getTime() - new Date(left.lastOpened).getTime(),
+    )
+    .map((project) => ({
+      source: project,
+      model: buildProjectManagementProject(
+        project,
+        projectManifests.value[project.path] ?? null,
+        workspaceFlowStates.value[project.path] ?? {},
+        workspaceAnalysisInputs.value[project.path] ?? {},
+      ),
+    }))
+
+  if (!query) return cards
+  return cards.filter((project) => projectCardMatchesSearch(project, query))
+})
+
+const searchShowsAll = computed(() => Boolean(searchQuery.value.trim()))
+const visibleProjectCards = computed(() =>
+  previewList(projectCards.value, {
+    limit: PROJECT_PREVIEW_LIMIT,
+    showAll: searchShowsAll.value || projectPreviewShowsAll.value,
+    selectedId: selectedProjectId.value,
+    getId: (project) => project.model.id,
+  }),
+)
+const projectListCanToggle = computed(
+  () => !searchShowsAll.value && projectCards.value.length > PROJECT_PREVIEW_LIMIT,
+)
+
+function projectCardMatchesSearch(project: ProjectCard, query: string): boolean {
+  const projectFields = [
+    project.source.name,
+    project.source.path,
+    project.source.topModule,
+    project.source.pdk,
+    project.model.name,
+    project.model.path,
+  ]
+  return (
+    projectFields.some((value) => textMatchesSearch(value, query)) ||
+    project.model.workspaces.some((workspace) => workspaceMatchesSearch(workspace, query))
+  )
+}
+
+function workspaceMatchesSearch(workspace: ProjectWorkspace, query: string): boolean {
+  return [
+    workspace.id,
+    workspace.name,
+    workspace.workspacePath,
+    workspace.sourceWorkspaceId,
+    workspace.branchStep,
+    workspace.startStep,
+    workspace.endStep,
+    workspace.flowStatusHint.label,
+  ].some((value) => textMatchesSearch(value, query))
+}
+
+function textMatchesSearch(value: unknown, query: string): boolean {
+  return typeof value === 'string' && value.toLowerCase().includes(query)
+}
+
+const selectedProject = computed<ProjectManagementProject>(() => {
+  const selected = projectCards.value.find(
+    (project) => project.model.id === selectedProjectId.value,
+  )
+  return (
+    selected?.model ?? projectCards.value[0]?.model ?? buildProjectManagementProject(null)
+  )
+})
+
+const selectedWorkspace = computed<ProjectWorkspace | null>(() => {
+  return (
+    selectedProject.value.workspaces.find(
+      (workspace) => workspace.id === selectedWorkspaceId.value,
+    ) ??
+    selectedProject.value.workspaces.find(
+      (workspace) => workspace.id === selectedProject.value.bestWorkspaceId,
+    ) ??
+    selectedProject.value.workspaces[0] ??
+    null
+  )
+})
+
+const selectedPopoverWorkspace = computed<ProjectWorkspace | null>(() => {
+  return (
+    selectedProject.value.workspaces.find(
+      (workspace) => workspace.id === popoverWorkspaceId.value,
+    ) ?? null
+  )
+})
+const pendingDeleteWorkspace = computed<ProjectWorkspace | null>(() => {
+  return (
+    selectedProject.value.workspaces.find(
+      (workspace) => workspace.id === pendingDeleteWorkspaceId.value,
+    ) ?? null
+  )
+})
+
+const projectManifestPreview = computed(() => {
+  const root = normalizePath(projectRootDraft.value.directory.trim())
+  if (!root) return '<project_root>/project.json'
+  return `${root}/project.json`
+})
+
+let activeProjectKey: string | null = null
+let projectManifestRefreshQueue = Promise.resolve()
+
+watch(
+  selectedProject,
+  (project) => {
+    const update = resolveProjectSelectionUpdate(
+      activeProjectKey,
+      project,
+      selectedWorkspaceId.value,
+    )
+    activeProjectKey = update.nextProjectKey
+
+    if (update.mode === 'reset' && update.selection) {
+      selectedWorkspaceId.value = update.selection.selectedWorkspaceId
+      selectedStep.value = update.selection.selectedStep
+      selectedIssueMetric.value = null
+      hasOpenedStepAnalysis.value = false
+      popoverWorkspaceId.value = ''
+      branchDraft.value = null
+      return
+    }
+
+    if (update.mode === 'reconcile-workspace') {
+      selectedWorkspaceId.value = update.nextWorkspaceId ?? ''
+    }
+  },
+  { immediate: true },
+)
+
+watch(projectSources, () => {
+  void refreshProjectManifests()
+})
+
+function selectProject(projectId: string) {
+  selectedProjectId.value = projectId
+  expandProjectWorkspaceList(projectId)
+  branchDraft.value = null
+  popoverWorkspaceId.value = ''
+  closeRowActionMenus()
+}
+
+function workspacePreviewShowsAll(projectId: string): boolean {
+  return searchShowsAll.value || workspacePreviewProjectIds.value.has(projectId)
+}
+
+function visibleProjectWorkspaces(project: ProjectManagementProject): ProjectWorkspace[] {
+  return previewList(project.workspaces, {
+    limit: WORKSPACE_PREVIEW_LIMIT,
+    showAll: workspacePreviewShowsAll(project.id),
+    selectedId:
+      project.id === selectedProjectId.value ? selectedWorkspaceId.value || null : null,
+    getId: (workspace) => workspace.id,
+  })
+}
+
+function workspaceListCanToggle(project: ProjectManagementProject): boolean {
+  return !searchShowsAll.value && project.workspaces.length > WORKSPACE_PREVIEW_LIMIT
+}
+
+function toggleWorkspacePreview(projectId: string): void {
+  const expanded = new Set(workspacePreviewProjectIds.value)
+  if (expanded.has(projectId)) {
+    expanded.delete(projectId)
+  } else {
+    expanded.add(projectId)
+  }
+  workspacePreviewProjectIds.value = expanded
+}
+
+function projectWorkspaceListExpanded(projectId: string): boolean {
+  return (
+    projectId === selectedProjectId.value && !collapsedProjectIds.value.has(projectId)
+  )
+}
+
+function projectWorkspaceListId(projectId: string): string {
+  return `project-workspaces-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+}
+
+function expandProjectWorkspaceList(projectId: string): void {
+  if (!collapsedProjectIds.value.has(projectId)) return
+  const expanded = new Set(collapsedProjectIds.value)
+  expanded.delete(projectId)
+  collapsedProjectIds.value = expanded
+}
+
+function toggleProjectWorkspaceList(projectId: string): void {
+  const collapsed = new Set(collapsedProjectIds.value)
+  if (collapsed.has(projectId)) {
+    collapsed.delete(projectId)
+  } else {
+    collapsed.add(projectId)
+    popoverWorkspaceId.value = ''
+    branchDraft.value = null
+    closeRowActionMenus()
+  }
+  collapsedProjectIds.value = collapsed
+}
+
+function writeFailureDetail(fileName: string, error: unknown): string {
+  const reason = error instanceof Error && error.message ? ` ${error.message}` : ''
+  return `${fileName} could not be updated. Check project path access, then retry.${reason}`
+}
+
+function selectWorkspace(workspaceId: string) {
+  selectedWorkspaceId.value = workspaceId
+  selectedIssueMetric.value = null
+  branchDraft.value = null
+  closeRowActionMenus()
+}
+
+function selectStep(step: FlowStep) {
+  selectedStep.value = step
+  selectedIssueMetric.value = null
+  hasOpenedStepAnalysis.value = true
+  branchDraft.value = null
+  closeRowActionMenus()
+}
+
+function selectIssueMetric(metric: string | null) {
+  selectedIssueMetric.value = metric
+}
+
+function openStepAnalysis() {
+  selectedAnalysisTab.value = 'step'
+  if (!hasOpenedStepAnalysis.value) {
+    selectedStep.value = 'Synth'
+    hasOpenedStepAnalysis.value = true
+  }
+}
+
+function handleAnalysisTabSelection(tab: 'dashboard' | 'step') {
+  if (tab === 'step') {
+    openStepAnalysis()
+    return
+  }
+  selectedAnalysisTab.value = tab
+}
+
+async function exportQorTrendReport() {
+  const project = selectedProject.value
+  if (!project.path) return
+
+  try {
+    await writeProjectTextFile(
+      'qor_trend.json',
+      serializeProjectQorTrendReport(project.qorTrendSummary, {
+        projectId: project.id,
+        projectName: project.name,
+        projectPath: project.path,
+      }),
+      { projectPath: project.path },
+    )
+    showToast({
+      severity: 'success',
+      summary: 'QoR report exported',
+      detail: 'qor_trend.json was written to the project root.',
+    })
+  } catch (error) {
+    console.warn('Failed to export QoR trend report.', error)
+    showToast({
+      severity: 'warn',
+      summary: 'QoR report not exported',
+      detail: writeFailureDetail('qor_trend.json', error),
+    })
+  }
+}
+
+async function setQorBaseline(payload: { workspaceId: string }) {
+  const project = selectedProject.value
+  if (!project.path) return
+
+  try {
+    const manifest =
+      projectManifests.value[project.path] ?? (await readProjectManifest(project.path))
+    const updated = setQorBaselineInManifest(
+      manifest,
+      payload.workspaceId,
+      'Selected from Dashboard QoR Overview',
+    )
+    if (updated === manifest) {
+      throw new Error(
+        `Workspace ${payload.workspaceId} is not registered in project.json.`,
+      )
+    }
+    await writeProjectTextFile('project.json', serializeProjectManifest(updated), {
+      projectPath: project.path,
+    })
+    await applyProjectManifestForProject(updated, project.path)
+    selectedWorkspaceId.value = payload.workspaceId
+    showToast({
+      severity: 'success',
+      summary: 'QoR baseline updated',
+      detail: `${payload.workspaceId} is now the project QoR baseline.`,
+    })
+  } catch (error) {
+    console.warn('Failed to update QoR baseline.', error)
+    showToast({
+      severity: 'warn',
+      summary: 'QoR baseline not updated',
+      detail: writeFailureDetail('project.json', error),
+    })
+  }
+}
+
+function toggleDialogMaximized() {
+  isDialogMaximized.value = !isDialogMaximized.value
+}
+
+async function startWorkspaceFromCell(workspaceId: string, step: FlowStep) {
+  const targetWorkspaceId = await nextAvailableWorkspaceId(selectedProject.value)
+  if (!targetWorkspaceId) return
+  branchDraft.value = createWorkspaceBranchDraft(
+    selectedProject.value,
+    workspaceId,
+    step,
+    targetWorkspaceId,
+  )
+}
+
+function toggleWorkspaceFlowPopover(workspaceId: string) {
+  selectedWorkspaceId.value = workspaceId
+  branchDraft.value = null
+  closeRowActionMenus()
+  popoverWorkspaceId.value = popoverWorkspaceId.value === workspaceId ? '' : workspaceId
+}
+
+function closeWorkspaceFlowPopover() {
+  popoverWorkspaceId.value = ''
+}
+
+function toggleProjectActionMenu(projectId: string) {
+  projectActionMenuId.value = projectActionMenuId.value === projectId ? null : projectId
+  workspaceActionMenuId.value = null
+  closeWorkspaceFlowPopover()
+}
+
+function toggleWorkspaceActionMenu(workspaceId: string) {
+  workspaceActionMenuId.value =
+    workspaceActionMenuId.value === workspaceId ? null : workspaceId
+  projectActionMenuId.value = null
+  closeWorkspaceFlowPopover()
+}
+
+function closeRowActionMenus() {
+  projectActionMenuId.value = null
+  workspaceActionMenuId.value = null
+}
+
+function modalElement(modal: ModalId): HTMLElement | null {
+  return {
+    'new-project': newProjectDialog.value,
+    'workspace-draft': workspaceDraftDialog.value,
+    'delete-workspace': deleteWorkspaceDialog.value,
+    'delete-project': deleteProjectDialog.value,
+  }[modal]
+}
+
+function modalFocusableElements(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(
+    dialog.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => !element.hasAttribute('hidden'))
+}
+
+function focusInitialModalElement(modal: ModalId) {
+  const dialog = modalElement(modal)
+  if (!dialog) return
+  const initial = dialog.querySelector<HTMLElement>('[data-dialog-initial-focus]')
+  ;(initial ?? modalFocusableElements(dialog)[0])?.focus()
+}
+
+function handleModalKeydown(event: KeyboardEvent, modal: ModalId) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    closeModal(modal)
+    return
+  }
+  if (event.key !== 'Tab') return
+
+  const dialog = modalElement(modal)
+  if (!dialog) return
+  const focusable = modalFocusableElements(dialog)
+  if (focusable.length === 0) {
+    event.preventDefault()
+    return
+  }
+
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function closeModal(modal: ModalId) {
+  if (modal === 'new-project') closeNewProjectDialog()
+  if (modal === 'workspace-draft') closeWorkspaceDraftDialog()
+  if (modal === 'delete-workspace') closeDeleteWorkspaceDialog()
+  if (modal === 'delete-project') closeDeleteProjectDialog()
+}
+
+function handleWorkspacePopoverPointerDown(event: PointerEvent) {
+  if (
+    !popoverWorkspaceId.value &&
+    !projectActionMenuId.value &&
+    !workspaceActionMenuId.value
+  )
+    return
+  const target = event.target
+  if (!(target instanceof Element)) {
+    closeWorkspaceFlowPopover()
+    closeRowActionMenus()
+    return
+  }
+  if (target.closest('.workspace-flow-popover')) return
+  if (target.closest('.workspace-flow-trigger')) return
+  if (target.closest('.row-action-menu')) return
+  if (target.closest('.row-action-menu-trigger')) return
+  closeWorkspaceFlowPopover()
+  closeRowActionMenus()
+}
+
+function handleWorkspacePopoverKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  if (popoverWorkspaceId.value) closeWorkspaceFlowPopover()
+  if (projectActionMenuId.value || workspaceActionMenuId.value) closeRowActionMenus()
+}
+
+async function startWorkspaceFromPopoverStep(workspaceId: string, step: FlowStep) {
+  await startWorkspaceFromCell(workspaceId, step)
+  closeWorkspaceFlowPopover()
+}
+
+function workspaceConfiguredSteps(
+  workspace: ProjectWorkspace,
+): ProjectWorkspace['steps'] {
+  const startIndex = FLOW_STEPS.indexOf(workspace.startStep)
+  const endIndex = FLOW_STEPS.indexOf(workspace.endStep)
+  if (startIndex < 0 || endIndex < startIndex) return workspace.steps
+  return workspace.steps.filter((cell) => {
+    const stepIndex = FLOW_STEPS.indexOf(cell.step)
+    return stepIndex >= startIndex && stepIndex <= endIndex
+  })
+}
+
+function closeWorkspaceDraftDialog() {
+  branchDraft.value = null
+}
+
+async function continueWorkspaceDraft() {
+  if (!branchDraft.value) return
+  await router.push({
+    path: '/ecc',
+    query: {
+      workspacePath: branchDraft.value.targetWorkspacePath,
+      projectRoot: selectedProject.value.path,
+      projectName: selectedProject.value.name,
+      sourceWorkspace: branchDraft.value.sourceWorkspaceId,
+      sourceWorkspacePath: branchDraft.value.sourceWorkspacePath,
+      sourceStep: branchDraft.value.step,
+      sourceOutputPath: branchDraft.value.sourceOutputPath,
+      sourceOutputType: branchDraft.value.sourceOutputType,
+      originDef: branchDraft.value.originDef,
+      originVerilog: branchDraft.value.originVerilog,
+      sdc: branchDraft.value.originSdc,
+      startStep: branchDraft.value.targetStartStep,
+      endStep: branchDraft.value.targetEndStep,
+      workspaceId: branchDraft.value.targetWorkspaceId,
+    },
+  })
+}
+
+async function openWorkspace(workspace: ProjectWorkspace) {
+  closeRowActionMenus()
+  const success = await openProject({
+    id: workspace.workspacePath,
+    name: `${selectedProject.value.name}/${workspace.id}`,
+    path: workspace.workspacePath,
+    lastOpened: new Date(),
+  })
+  if (success) {
+    await router.push({
+      path: '/workspace/home',
+      query: workspaceRouteQuery(workspace.workspacePath, workspace.id),
+    })
+  } else {
+    showToast({
+      severity: 'warn',
+      summary: 'Workspace not opened',
+      detail: `${workspace.workspacePath} is not available yet.`,
+    })
+  }
+}
+
+function refreshProjectManifests(): Promise<void> {
+  const refresh = projectManifestRefreshQueue.then(
+    refreshProjectManifestsNow,
+    refreshProjectManifestsNow,
+  )
+  projectManifestRefreshQueue = refresh.then(
+    () => undefined,
+    () => undefined,
+  )
+  return refresh
+}
+
+async function refreshProjectManifestsNow() {
+  const entries: Array<
+    [
+      string,
+      ProjectManifest,
+      ProjectWorkspaceFlowStatesById,
+      ProjectWorkspaceAnalysisInputsById,
+    ]
+  > = []
+
+  for (const project of projectSources.value) {
+    try {
+      const projectRoot = await registerProjectRootForProjectManagement(project.path)
+      if (!projectRoot) continue
+      const manifestText = await readOptionalProjectTextFile('project.json', {
+        projectPath: projectRoot,
+      })
+      if (!manifestText) continue
+      const manifest = parseProjectManifest(manifestText)
+      const flowStates = await readProjectWorkspaceFlowStates(manifest)
+      const analysisInputs = await readProjectWorkspaceAnalysisInputs(manifest)
+      entries.push([project.path, manifest, flowStates, analysisInputs])
+    } catch (error) {
+      console.warn(`Failed to load project manifest: ${project.path}`, error)
+    }
+  }
+
+  projectManifests.value = Object.fromEntries(
+    entries.map(([path, manifest]) => [path, manifest]),
+  )
+  workspaceFlowStates.value = Object.fromEntries(
+    entries.map(([path, _manifest, flowStates]) => [path, flowStates]),
+  )
+  workspaceAnalysisInputs.value = Object.fromEntries(
+    entries.map(([path, _manifest, _flowStates, analysisInputs]) => [
+      path,
+      analysisInputs,
+    ]),
+  )
+}
+
+async function importProject() {
+  try {
+    const desktopApi = await waitForDesktopApi({ timeoutMs: 500 })
+    const directory = await desktopApi.dialog.pickDirectory({
+      title: 'Select Project Folder',
+    })
+    if (!directory) return
+
+    const projectRoot = await registerProjectRootForProjectManagement(directory)
+    if (!projectRoot) {
+      showToast({
+        severity: 'warn',
+        summary: 'Project not imported',
+        detail:
+          'The selected project folder could not be registered for local file access.',
+      })
+      return
+    }
+
+    const project = await loadProjectFromRoot(projectRoot)
+    const manifest = await readProjectManifest(project.path)
+    projectHistory.value = await rememberProjectHistoryEntry(project)
+    projectManifests.value = {
+      ...projectManifests.value,
+      [project.path]: manifest,
+    }
+    workspaceFlowStates.value = {
+      ...workspaceFlowStates.value,
+      [project.path]: await readProjectWorkspaceFlowStates(manifest),
+    }
+    workspaceAnalysisInputs.value = {
+      ...workspaceAnalysisInputs.value,
+      [project.path]: await readProjectWorkspaceAnalysisInputs(manifest),
+    }
+    selectedProjectId.value = project.id
+  } catch (error) {
+    console.warn('Failed to import project root.', error)
+    showToast({
+      severity: 'warn',
+      summary: 'Project not imported',
+      detail: 'Select a folder that contains a valid project.json.',
+    })
+  }
+}
+
+async function importWorkspaceIntoProject(project: ProjectManagementProject) {
+  closeRowActionMenus()
+  if (!project.path) return
+  try {
+    const desktopApi = await waitForDesktopApi({ timeoutMs: 500 })
+    const directory = await desktopApi.dialog.pickDirectory({
+      title: 'Select Workspace Folder',
+    })
+    if (!directory) return
+
+    const projectRoot = await registerProjectRootForProjectManagement(project.path)
+    if (!projectRoot) {
+      showToast({
+        severity: 'warn',
+        summary: 'Workspace not imported',
+        detail: 'The project root could not be registered for local file access.',
+      })
+      return
+    }
+
+    const updated = await mutateProjectManifest(projectRoot, {
+      type: 'register-workspace',
+      input: {
+        projectRoot,
+        projectName: project.name,
+        workspacePath: directory,
+      },
+    })
+    await applyProjectManifestForProject(updated, projectRoot)
+    selectedProjectId.value = project.id
+  } catch (error) {
+    console.warn('Failed to import workspace into project.', error)
+    showToast({
+      severity: 'warn',
+      summary: 'Workspace not imported',
+      detail: writeFailureDetail('project.json', error),
+    })
+  }
+}
+
+async function createWorkspaceForProject(project: ProjectManagementProject) {
+  closeRowActionMenus()
+  if (!project.path) return
+  const workspaceId = await nextAvailableWorkspaceId(project)
+  if (!workspaceId) return
+  await router.push({
+    path: '/ecc',
+    query: {
+      projectRoot: project.path,
+      projectName: project.name,
+      workspacePath: joinProjectPath(project.path, workspaceId),
+      workspaceId,
+    },
+  })
+}
+
+function requestDeleteWorkspace(workspaceId: string) {
+  closeRowActionMenus()
+  pendingDeleteWorkspaceId.value = workspaceId
+  keepWorkspaceDataOnDelete.value = true
+  deleteWorkspaceError.value = ''
+}
+
+function closeDeleteWorkspaceDialog() {
+  pendingDeleteWorkspaceId.value = null
+  keepWorkspaceDataOnDelete.value = true
+  deleteWorkspaceError.value = ''
+}
+
+async function confirmDeleteWorkspace() {
+  const workspaceId = pendingDeleteWorkspaceId.value
+  deleteWorkspaceError.value = ''
+  const deleted = await deleteWorkspace(workspaceId ?? undefined, {
+    keepWorkspaceData: keepWorkspaceDataOnDelete.value,
+  })
+  if (deleted) closeDeleteWorkspaceDialog()
+}
+
+function requestDeleteProject(project: Project) {
+  closeRowActionMenus()
+  pendingDeleteProject.value = project
+}
+
+function closeDeleteProjectDialog() {
+  pendingDeleteProject.value = null
+}
+
+async function confirmDeleteProject() {
+  if (!pendingDeleteProject.value) return
+  await removeProjectFromHistory(pendingDeleteProject.value)
+  closeDeleteProjectDialog()
+}
+
+async function deleteWorkspace(
+  workspaceId?: string,
+  options: { keepWorkspaceData?: boolean } = {},
+): Promise<boolean> {
+  if (!workspaceId || !selectedProject.value.path) return false
+  try {
+    const updated = await mutateProjectManifest(selectedProject.value.path, {
+      type: 'delete-workspace',
+      workspaceId,
+      deleteDirectory: !options.keepWorkspaceData,
+    })
+
+    try {
+      await applyProjectManifestForProject(updated, selectedProject.value.path)
+    } catch (error) {
+      console.warn(
+        'Workspace deletion succeeded but project cache refresh failed.',
+        error,
+      )
+    }
+
+    if (
+      selectedWorkspaceId.value === workspaceId ||
+      !updated.workspaces.some(
+        (workspace) => workspace.workspace_id === selectedWorkspaceId.value,
+      )
+    ) {
+      selectedWorkspaceId.value = updated.workspaces[0]?.workspace_id ?? ''
+    }
+    branchDraft.value = null
+    return true
+  } catch (error) {
+    console.warn('Failed to delete selected workspace.', error)
+    deleteWorkspaceError.value = writeFailureDetail('project.json', error)
+    showToast({
+      severity: 'warn',
+      summary: 'Workspace not deleted',
+      detail: deleteWorkspaceError.value,
+    })
+    return false
+  }
+}
+
+async function nextAvailableWorkspaceId(
+  project: ProjectManagementProject,
+): Promise<string | null> {
+  try {
+    const projectRoot = await registerProjectRootForProjectManagement(project.path)
+    if (!projectRoot) throw new Error('Project root could not be registered.')
+    const desktopApi = await waitForDesktopApi({ timeoutMs: 500 })
+    const entries = await desktopApi.workspace.listProjectDirectory(projectRoot)
+    const occupiedWorkspaceIds = entries.map((entry) => entry.name)
+    return nextWorkspaceId(project, occupiedWorkspaceIds)
+  } catch (error) {
+    console.warn('Failed to inspect existing workspace directories.', error)
+    showToast({
+      severity: 'warn',
+      summary: 'Workspace not created',
+      detail: 'The project directory could not be inspected safely.',
+    })
+    return null
+  }
+}
+
+async function removeProjectFromHistory(project: Project) {
+  projectHistory.value = await removeProjectHistoryEntry(project.path)
+  const nextManifests = { ...projectManifests.value }
+  delete nextManifests[project.path]
+  projectManifests.value = nextManifests
+  const nextWorkspaceFlowStates = { ...workspaceFlowStates.value }
+  delete nextWorkspaceFlowStates[project.path]
+  workspaceFlowStates.value = nextWorkspaceFlowStates
+  const nextWorkspaceAnalysisInputs = { ...workspaceAnalysisInputs.value }
+  delete nextWorkspaceAnalysisInputs[project.path]
+  workspaceAnalysisInputs.value = nextWorkspaceAnalysisInputs
+  if (selectedProjectId.value === project.id) {
+    selectedProjectId.value = projectCards.value[0]?.model.id ?? null
+  }
+}
+
+function openNewProjectDialog() {
+  closeRowActionMenus()
+  projectRootError.value = ''
+  projectRootDraft.value = {
+    name: '',
+    directory: '',
+  }
+  showNewProjectDialog.value = true
+}
+
+function closeNewProjectDialog() {
+  showNewProjectDialog.value = false
+  projectRootError.value = ''
+}
+
+async function selectProjectStorageLocation() {
+  projectRootError.value = ''
+  try {
+    const desktopApi = await waitForDesktopApi({ timeoutMs: 500 })
+    const directory = await desktopApi.dialog.pickDirectory({
+      title: 'Select Project Storage Location',
+    })
+    if (directory) projectRootDraft.value.directory = normalizePath(directory)
+  } catch {
+    const manualPath =
+      typeof window !== 'undefined' ? window.prompt('Project Storage Location') : null
+    if (manualPath) projectRootDraft.value.directory = normalizePath(manualPath)
+  }
+}
+
+async function createProjectFolderDraft() {
+  const directory = normalizePath(projectRootDraft.value.directory.trim())
+  if (!directory) {
+    projectRootError.value = 'Project Storage Location is required.'
+    return
+  }
+
+  const projectRoot = await registerProjectRootForProjectManagement(directory)
+  if (!projectRoot) {
+    projectRootError.value = 'Project Storage Location could not be registered.'
+    showToast({
+      severity: 'warn',
+      summary: 'Project not created',
+      detail: 'The selected project root could not be registered for local file access.',
+    })
+    return
+  }
+
+  const name =
+    projectRootDraft.value.name.trim() || basenamePath(projectRoot) || 'project'
+  const manifest = await mutateProjectManifest(projectRoot, {
+    type: 'create',
+    name,
+  })
+  await applyProjectManifestForProject(manifest, projectRoot)
+  selectedProjectId.value = projectRoot
+  closeNewProjectDialog()
 }
 
 const goBack = () => router.push('/')
 
-const handleOpen = async (project: Project) => {
-  const success = await openProject(project)
-  if (success) router.push('/workspace')
+function workspaceCountLabel(count: number): string {
+  return `${count} workspace${count === 1 ? '' : 's'}`
 }
 
-const handleRemove = async (projectId: string) => {
-  await removeRecentProject(projectId)
+function workspaceDepthStyle(workspace: ProjectWorkspace) {
+  return {
+    '--workspace-depth': String(workspace.depth),
+  }
 }
 
-function statusBadgeClass(status?: ProjectStatus): string {
-  if (!status) return 'bg-gray-500/15 text-gray-400'
-  const map: Record<ProjectStatus, string> = {
-    success: 'bg-emerald-500/15 text-emerald-400',
-    failed: 'bg-red-500/15 text-red-400',
-    running: 'bg-blue-500/15 text-blue-400',
-    in_progress: 'bg-amber-500/15 text-amber-400',
-    not_started: 'bg-gray-500/15 text-gray-400',
+function flowStatusHintClass(state: ProjectFlowStatusHint['state']): string {
+  return `flow-hint-${state}`
+}
+
+function workspacePopoverPlacementClass(_workspaceId: string): string {
+  return ''
+}
+
+function stepStatusClass(status: ProjectStepStatus): string {
+  const map: Record<ProjectStepStatus, string> = {
+    success: 'step-success',
+    reused: 'step-reused',
+    skipped: 'step-skipped',
+    unstart: 'step-unstart',
+    running: 'step-running',
+    failed: 'step-failed',
   }
   return map[status]
 }
 
-function statusLabel(status?: ProjectStatus): string {
-  if (!status) return 'Unknown'
-  const map: Record<ProjectStatus, string> = {
-    success: 'Success',
-    failed: 'Failed',
-    running: 'Running',
-    in_progress: 'In Progress',
-    not_started: 'Not Started',
-  }
-  return map[status]
+function joinProjectPath(rootPath: string, name: string): string {
+  const root = normalizePath(rootPath)
+  const child = name.replace(/^\/+/, '')
+  return root ? `${root}/${child}` : child
 }
 
-function statusIcon(status?: ProjectStatus): string {
-  if (!status) return 'ri-question-line'
-  const map: Record<ProjectStatus, string> = {
-    success: 'ri-check-line',
-    failed: 'ri-close-line',
-    running: 'ri-loader-4-line',
-    in_progress: 'ri-time-line',
-    not_started: 'ri-subtract-line',
-  }
-  return map[status]
+async function loadProjectFromRoot(projectRoot: string): Promise<Project> {
+  const root = normalizePath(projectRoot)
+  const manifest = await readProjectManifest(root)
+  return projectFromManifest(manifest, root)
 }
 
-function statusIconBgClass(status?: ProjectStatus): string {
-  if (!status) return 'bg-gray-500/10'
-  const map: Record<ProjectStatus, string> = {
-    success: 'bg-emerald-500/10',
-    failed: 'bg-red-500/10',
-    running: 'bg-blue-500/10',
-    in_progress: 'bg-amber-500/10',
-    not_started: 'bg-gray-500/10',
+async function registerProjectRootForProjectManagement(
+  projectRoot: string,
+): Promise<string | null> {
+  try {
+    const desktopApi = await waitForDesktopApi({ timeoutMs: 500 })
+    const registeredRoot = await desktopApi.workspace.registerProjectRoot(projectRoot)
+    return normalizePath(registeredRoot || projectRoot)
+  } catch (error) {
+    console.warn('Failed to register project root for Project Management.', error)
+    return null
   }
-  return map[status]
 }
 
-function statusIconColorClass(status?: ProjectStatus): string {
-  if (!status) return 'text-gray-400'
-  const map: Record<ProjectStatus, string> = {
-    success: 'text-emerald-400',
-    failed: 'text-red-400',
-    running: 'text-blue-400',
-    in_progress: 'text-amber-400',
-    not_started: 'text-gray-400',
-  }
-  return map[status]
+async function readProjectManifest(projectRoot: string): Promise<ProjectManifest> {
+  const manifestText = await readOptionalProjectTextFile('project.json', {
+    projectPath: projectRoot,
+  })
+  if (!manifestText) throw new Error('Project manifest does not exist.')
+  return parseProjectManifest(manifestText)
 }
 
-function progressBarColor(status?: ProjectStatus): string {
-  if (!status) return 'bg-gray-500'
-  const map: Record<ProjectStatus, string> = {
-    success: 'bg-emerald-500',
-    failed: 'bg-red-500',
-    running: 'bg-blue-500',
-    in_progress: 'bg-amber-500',
-    not_started: 'bg-gray-500',
+async function applyProjectManifestForProject(
+  manifest: ProjectManifest,
+  projectRoot: string,
+) {
+  const registeredProjectRoot = await registerProjectRootForProjectManagement(projectRoot)
+  if (!registeredProjectRoot) throw new Error('Project root could not be registered.')
+  const normalizedRoot = normalizePath(registeredProjectRoot)
+  const flowStates = await readProjectWorkspaceFlowStates(manifest)
+  const analysisInputs = await readProjectWorkspaceAnalysisInputs(manifest)
+  projectManifests.value = {
+    ...projectManifests.value,
+    [projectRoot]: manifest,
+    [normalizedRoot]: manifest,
   }
-  return map[status]
+  workspaceFlowStates.value = {
+    ...workspaceFlowStates.value,
+    [projectRoot]: flowStates,
+    [normalizedRoot]: flowStates,
+  }
+  workspaceAnalysisInputs.value = {
+    ...workspaceAnalysisInputs.value,
+    [projectRoot]: analysisInputs,
+    [normalizedRoot]: analysisInputs,
+  }
+  projectHistory.value = await rememberProjectHistoryEntry(
+    projectFromManifest(manifest, normalizedRoot),
+  )
 }
 
-function formatDate(date: Date): string {
-  const now = new Date()
-  const diff = now.getTime() - new Date(date).getTime()
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-  if (days === 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  if (days < 7) return `${days}d ago`
-  if (days < 30) return `${Math.floor(days / 7)}w ago`
-  return new Date(date).toLocaleDateString('en-US')
+function workspaceRouteQuery(workspacePath?: string, workspaceId?: string) {
+  return {
+    projectRoot: selectedProject.value.path,
+    projectName: selectedProject.value.name,
+    workspaceId:
+      workspaceId ||
+      basenamePath(workspacePath ?? '') ||
+      selectedWorkspace.value?.id ||
+      '',
+  }
+}
+
+function projectFromManifest(manifest: ProjectManifest, fallbackRoot: string): Project {
+  const path = normalizePath(manifest.root_path || fallbackRoot)
+  return {
+    id: path,
+    name: manifest.name || basenamePath(path) || 'project',
+    path,
+    lastOpened: new Date(),
+    pdk: manifest.base_design.pdk,
+    topModule: manifest.base_design.top_module,
+    status: projectStatusFromManifest(manifest),
+  }
+}
+
+function projectStatusFromManifest(manifest: ProjectManifest): ProjectStatus {
+  if (manifest.workspaces.some((workspace) => workspace.status === 'running'))
+    return 'running'
+  if (manifest.workspaces.some((workspace) => workspace.status === 'failed'))
+    return 'failed'
+  if (manifest.workspaces.some((workspace) => workspace.status === 'in_progress'))
+    return 'in_progress'
+  if (
+    manifest.workspaces.length > 0 &&
+    manifest.workspaces.every((workspace) => workspace.status === 'success')
+  )
+    return 'success'
+  return manifest.workspaces.length > 0 ? 'in_progress' : 'not_started'
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/g, '')
+}
+
+function basenamePath(path: string): string {
+  return normalizePath(path).split('/').filter(Boolean).pop() ?? ''
 }
 </script>
 
-<style scoped>
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>
+<style scoped src="./project-management/projectsView.css"></style>

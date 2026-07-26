@@ -232,6 +232,7 @@ describe('useParameters desktop bridge integration', () => {
       cmd: 'refresh_config',
       data: {
         directory: '/workspace/demo',
+        workspaceHandle: 'workspace-demo',
       },
     })
   })
@@ -695,6 +696,7 @@ describe('useParameters desktop bridge integration', () => {
       cmd: 'refresh_config',
       data: {
         directory: '/workspace/demo',
+        workspaceHandle: 'workspace-demo',
       },
     })
   })

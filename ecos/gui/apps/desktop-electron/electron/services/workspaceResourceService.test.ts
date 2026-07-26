@@ -83,11 +83,7 @@ describe('WorkspaceResourceService', () => {
     })
     await writeFile(join(root, 'place_ecc', 'output', 'gcd_place.json'), '{}', 'utf8')
     await writeFile(join(root, 'place_ecc', 'output', 'gcd_place.png'), 'png', 'utf8')
-    await writeFile(
-      join(root, 'place_ecc', 'analysis', 'place_metrics.json'),
-      '{}',
-      'utf8',
-    )
+    await writeFile(join(root, 'place_ecc', 'analysis', 'qor_metrics.json'), '{}', 'utf8')
 
     const service = new WorkspaceResourceService({ projectScopeProvider: provider(root) })
     const index = await service.getIndex()
@@ -274,7 +270,7 @@ describe('WorkspaceResourceService', () => {
     expect(index.tech?.cellMasters.exists).toBe(false)
   })
 
-  it('returns resolveStepInfo(layout) with missing files instead of throwing', async () => {
+  it('returns resolveStepInfo(layout) with missing native-render inputs instead of throwing', async () => {
     const root = await tempWorkspace()
     await mkdir(join(root, 'home'), { recursive: true })
     await writeJson(join(root, 'home', 'parameters.json'), {
@@ -295,6 +291,9 @@ describe('WorkspaceResourceService', () => {
       id: 'layout',
       response: 'missing',
       info: {
+        db: join(root, 'route_ecc', 'output', 'gcd_route_db'),
+        def: join(root, 'route_ecc', 'output', 'gcd_route.def.gz'),
+        gds: join(root, 'route_ecc', 'output', 'gcd_route.gds'),
         image: join(root, 'route_ecc', 'output', 'gcd_route.png'),
         json: join(root, 'route_ecc', 'output', 'gcd_route.json'),
       },
@@ -302,22 +301,25 @@ describe('WorkspaceResourceService', () => {
     expect(result.missing).toEqual(
       expect.arrayContaining([
         join(root, 'route_ecc', 'output', 'gcd_route.png'),
-        join(root, 'route_ecc', 'output', 'gcd_route.json'),
+        join(root, 'route_ecc', 'output', 'gcd_route.def.gz'),
+        join(root, 'route_ecc', 'output', 'gcd_route.gds'),
+        join(root, 'route_ecc', 'output', 'gcd_route_db'),
       ]),
+    )
+    expect(result.missing).not.toContain(
+      join(root, 'route_ecc', 'output', 'gcd_route.json'),
     )
   })
 
-  it('returns the step view JSON package from resolveStepInfo(layout)', async () => {
+  it('does not require the legacy step view JSON package for layout info', async () => {
     const root = await tempWorkspace()
     await writeWorkspace(root, [{ name: 'place', tool: 'dreamplace' }])
-    await mkdir(join(root, 'place_dreamplace', 'output', 'gcd_place_view'), {
+    await mkdir(join(root, 'place_dreamplace', 'output', 'gcd_place_db'), {
       recursive: true,
     })
-    await writeFile(
-      join(root, 'place_dreamplace', 'output', 'gcd_place_view', 'manifest.json'),
-      '{}',
-      'utf8',
-    )
+    await writeFile(join(root, 'place_dreamplace', 'output', 'gcd_place.def.gz'), 'def')
+    await writeFile(join(root, 'place_dreamplace', 'output', 'gcd_place.gds'), 'gds')
+    await writeFile(join(root, 'place_dreamplace', 'output', 'gcd_place.png'), 'png')
 
     const service = new WorkspaceResourceService({ projectScopeProvider: provider(root) })
     const result = await service.resolveStepInfo({ step: 'place', id: 'layout' })
@@ -325,17 +327,95 @@ describe('WorkspaceResourceService', () => {
     expect(result).toMatchObject({
       step: 'place',
       id: 'layout',
-      response: 'missing',
+      response: 'available',
       info: {
+        db: join(root, 'place_dreamplace', 'output', 'gcd_place_db'),
+        def: join(root, 'place_dreamplace', 'output', 'gcd_place.def.gz'),
+        gds: join(root, 'place_dreamplace', 'output', 'gcd_place.gds'),
+        image: join(root, 'place_dreamplace', 'output', 'gcd_place.png'),
         viewJson: join(root, 'place_dreamplace', 'output', 'gcd_place_view'),
+        geometryManifest: join(
+          root,
+          'place_dreamplace',
+          'output',
+          'geometry',
+          'geometry.manifest',
+        ),
       },
     })
-    expect(result.missing).toContain(
-      join(root, 'place_dreamplace', 'output', 'gcd_place.json'),
-    )
+    expect(result.missing).toEqual([])
     expect(result.missing).not.toContain(
       join(root, 'place_dreamplace', 'output', 'gcd_place_view'),
     )
+  })
+
+  it.each([
+    ['Floorplan', 'ecc'],
+    ['fixFanout', 'ecc'],
+    ['place', 'dreamplace'],
+    ['CTS', 'ecc'],
+    ['legalization', 'dreamplace'],
+    ['route', 'ecc'],
+    ['drc', 'ecc'],
+    ['filler', 'ecc'],
+    ['RCX', 'ecc'],
+  ])('marks %s layout available from native renderer inputs', async (stepName, tool) => {
+    const root = await tempWorkspace()
+    await writeWorkspace(root, [{ name: stepName, tool }])
+    const stepDirectory = join(root, `${stepName}_${tool}`)
+    const outputDirectory = join(stepDirectory, 'output')
+    await mkdir(join(outputDirectory, `gcd_${stepName}_db`), { recursive: true })
+    await writeFile(join(outputDirectory, `gcd_${stepName}.def.gz`), 'def')
+    await writeFile(join(outputDirectory, `gcd_${stepName}.gds`), 'gds')
+    await writeFile(join(outputDirectory, `gcd_${stepName}.png`), 'png')
+
+    const service = new WorkspaceResourceService({ projectScopeProvider: provider(root) })
+    const result = await service.resolveStepInfo({ step: stepName, id: 'layout' })
+
+    expect(result).toMatchObject({
+      step: stepName,
+      id: 'layout',
+      response: 'available',
+      info: {
+        db: join(outputDirectory, `gcd_${stepName}_db`),
+        def: join(outputDirectory, `gcd_${stepName}.def.gz`),
+        gds: join(outputDirectory, `gcd_${stepName}.gds`),
+        image: join(outputDirectory, `gcd_${stepName}.png`),
+      },
+      missing: [],
+    })
+  })
+
+  it('resolves Harden preview and subflow resources from the ECC step directory', async () => {
+    const root = await tempWorkspace()
+    await writeWorkspace(root, [{ name: 'Harden', tool: 'ecc' }])
+    await mkdir(join(root, 'Harden_ecc', 'output'), { recursive: true })
+    await writeFile(join(root, 'Harden_ecc', 'output', 'gcd_Harden.png'), 'png', 'utf8')
+    await writeJson(join(root, 'Harden_ecc', 'subflow.json'), {
+      path: join(root, 'Harden_ecc', 'subflow.json'),
+      steps: [{ name: 'run harden', state: 'Success' }],
+    })
+
+    const service = new WorkspaceResourceService({ projectScopeProvider: provider(root) })
+
+    await expect(
+      service.resolveStepInfo({ step: 'harden', id: 'layout' }),
+    ).resolves.toMatchObject({
+      step: 'Harden',
+      response: 'missing',
+      info: {
+        image: join(root, 'Harden_ecc', 'output', 'gcd_Harden.png'),
+      },
+    })
+    await expect(
+      service.resolveStepInfo({ step: 'Harden', id: 'subflow' }),
+    ).resolves.toMatchObject({
+      step: 'Harden',
+      response: 'available',
+      info: {
+        path: join(root, 'Harden_ecc', 'subflow.json'),
+      },
+    })
   })
 
   it('maps yosys config to flow_config.json', async () => {
@@ -523,7 +603,7 @@ describe('WorkspaceResourceService', () => {
     })
     await writeJson(join(root, 'home', 'home.json'), {})
     await writeFile(
-      join(root, 'Synthesis_yosys', 'analysis', 'Synthesis_metrics.json'),
+      join(root, 'Synthesis_yosys', 'analysis', 'qor_metrics.json'),
       '{}',
       'utf8',
     )
@@ -551,7 +631,7 @@ describe('WorkspaceResourceService', () => {
       id: 'analysis',
       response: 'available',
       info: {
-        metrics: join(root, 'Synthesis_yosys', 'analysis', 'Synthesis_metrics.json'),
+        metrics: join(root, 'Synthesis_yosys', 'analysis', 'qor_metrics.json'),
         'data summary': join(root, 'Synthesis_yosys', 'feature', 'Synthesis_stat.json'),
         'step report': {
           stat: join(root, 'Synthesis_yosys', 'report', 'Synthesis_stat.json'),

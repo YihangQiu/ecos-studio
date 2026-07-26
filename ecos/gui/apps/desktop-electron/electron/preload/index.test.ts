@@ -1,4 +1,8 @@
-import { desktopApiEventChannels, desktopApiIpcChannels } from '@ecos-studio/shared'
+import {
+  desktopApiEventChannels,
+  desktopApiIpcChannels,
+  desktopMenuEventIds,
+} from '@ecos-studio/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { contextBridgeExposeInMainWorld, ipcRenderer } = vi.hoisted(() => ({
@@ -29,11 +33,31 @@ async function loadDesktopBridge() {
     app: {
       getVersions(): Promise<unknown>
     }
-    cli: {
-      onEvent(listener: (event: unknown) => void): () => void
+    ecc: {
+      events: {
+        onEvent(listener: (event: unknown) => void): () => void
+      }
+      flow: {
+        runStep(request: unknown): Promise<unknown>
+      }
+      workspace: {
+        exportSignoff(request: unknown): Promise<unknown>
+        inspectSignoff(request: unknown): Promise<unknown>
+      }
+    }
+    dialog: {
+      saveFile(options: unknown): Promise<unknown>
+    }
+    menu: {
+      setActionEnabled(action: string, enabled: boolean): Promise<void>
     }
     workspace: {
       readProjectTextFile(path: string): Promise<unknown>
+      listProjectDirectory(path: string): Promise<unknown>
+      prepareProjectDirectoryReplacement(path: string): Promise<unknown>
+      restoreProjectDirectoryReplacement(replacementId: string): Promise<unknown>
+      finalizeProjectDirectoryReplacement(replacementId: string): Promise<unknown>
+      retainProjectDirectoryReplacement(replacementId: string): Promise<unknown>
     }
   }
 }
@@ -56,8 +80,13 @@ describe('preload desktop bridge contract', () => {
         app: expect.objectContaining({
           getVersions: expect.any(Function),
         }),
-        cli: expect.objectContaining({
-          onEvent: expect.any(Function),
+        ecc: expect.objectContaining({
+          events: expect.objectContaining({
+            onEvent: expect.any(Function),
+          }),
+          flow: expect.objectContaining({
+            runStep: expect.any(Function),
+          }),
         }),
         workspace: expect.objectContaining({
           readProjectTextFile: expect.any(Function),
@@ -70,11 +99,41 @@ describe('preload desktop bridge contract', () => {
     const bridge = await loadDesktopBridge()
     ipcRenderer.invoke.mockResolvedValueOnce({ gui: '0.1.0-test' })
     ipcRenderer.invoke.mockResolvedValueOnce('module top; endmodule')
+    ipcRenderer.invoke.mockResolvedValueOnce([
+      { name: 'top.v', path: '/work/demo/origin/top.v', type: 'file' },
+    ])
+    ipcRenderer.invoke.mockResolvedValueOnce({
+      id: 'replacement-demo-1',
+      targetPath: '/work/demo',
+      backupPath: '/work/.demo.replace-backup',
+    })
+    ipcRenderer.invoke.mockResolvedValueOnce(undefined)
+    ipcRenderer.invoke.mockResolvedValueOnce(undefined)
 
     await expect(bridge.app.getVersions()).resolves.toEqual({ gui: '0.1.0-test' })
     await expect(bridge.workspace.readProjectTextFile('rtl/top.sv')).resolves.toBe(
       'module top; endmodule',
     )
+    await expect(
+      bridge.workspace.listProjectDirectory('/work/demo/origin'),
+    ).resolves.toEqual([{ name: 'top.v', path: '/work/demo/origin/top.v', type: 'file' }])
+    const replacement = {
+      id: 'replacement-demo-1',
+      targetPath: '/work/demo',
+      backupPath: '/work/.demo.replace-backup',
+    }
+    await expect(
+      bridge.workspace.prepareProjectDirectoryReplacement('/work/demo'),
+    ).resolves.toEqual(replacement)
+    await expect(
+      bridge.workspace.restoreProjectDirectoryReplacement(replacement.id),
+    ).resolves.toBeUndefined()
+    await expect(
+      bridge.workspace.finalizeProjectDirectoryReplacement(replacement.id),
+    ).resolves.toBeUndefined()
+    await expect(
+      bridge.workspace.retainProjectDirectoryReplacement(replacement.id),
+    ).resolves.toBeUndefined()
 
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
       1,
@@ -85,24 +144,131 @@ describe('preload desktop bridge contract', () => {
       desktopApiIpcChannels.workspaceReadProjectTextFile,
       'rtl/top.sv',
     )
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      3,
+      desktopApiIpcChannels.workspaceListProjectDirectory,
+      '/work/demo/origin',
+    )
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      4,
+      desktopApiIpcChannels.workspacePrepareProjectDirectoryReplacement,
+      '/work/demo',
+    )
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      5,
+      desktopApiIpcChannels.workspaceRestoreProjectDirectoryReplacement,
+      replacement.id,
+    )
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      6,
+      desktopApiIpcChannels.workspaceFinalizeProjectDirectoryReplacement,
+      replacement.id,
+    )
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      7,
+      desktopApiIpcChannels.workspaceRetainProjectDirectoryReplacement,
+      replacement.id,
+    )
+  })
+
+  it('routes ECC flow calls through the shared IPC channel constant', async () => {
+    const bridge = await loadDesktopBridge()
+    ipcRenderer.invoke.mockResolvedValueOnce({
+      state: 'Success',
+      step: 'place',
+    })
+    const request = {
+      rerun: false,
+      step: 'place',
+      workspaceHandle: 'workspace-handle-1',
+    }
+
+    await expect(bridge.ecc.flow.runStep(request)).resolves.toMatchObject({
+      state: 'Success',
+      step: 'place',
+    })
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      desktopApiIpcChannels.eccFlowRunStep,
+      request,
+    )
+  })
+
+  it('routes ECC signoff export through the shared IPC channel constant', async () => {
+    const bridge = await loadDesktopBridge()
+    const request = {
+      outputPath: '/exports/custom package.tar.gz',
+      workspaceHandle: 'workspace-handle-1',
+    }
+    ipcRenderer.invoke.mockResolvedValueOnce({
+      outputPath: request.outputPath,
+    })
+
+    await expect(bridge.ecc.workspace.exportSignoff(request)).resolves.toEqual({
+      outputPath: request.outputPath,
+    })
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      desktopApiIpcChannels.eccWorkspaceExportSignoff,
+      request,
+    )
+  })
+
+  it('routes ECC signoff inspection through the shared IPC channel constant', async () => {
+    const bridge = await loadDesktopBridge()
+    const request = { workspaceHandle: 'workspace-handle-1' }
+    const result = { groups: [], risks: [], status: 'ready' }
+    ipcRenderer.invoke.mockResolvedValueOnce(result)
+
+    await expect(bridge.ecc.workspace.inspectSignoff(request)).resolves.toEqual(result)
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      desktopApiIpcChannels.eccWorkspaceInspectSignoff,
+      request,
+    )
+  })
+
+  it('routes Save As and menu enabled-state calls through shared IPC channels', async () => {
+    const bridge = await loadDesktopBridge()
+    const options = {
+      title: 'Export Signoff Package',
+      defaultPath: '/exports/gcd_signoff_package.tar.gz',
+      filters: [{ name: 'Tarball', extensions: ['tar.gz'] }],
+    }
+    ipcRenderer.invoke.mockResolvedValueOnce(options.defaultPath)
+    ipcRenderer.invoke.mockResolvedValueOnce(undefined)
+
+    await expect(bridge.dialog.saveFile(options)).resolves.toBe(options.defaultPath)
+    await expect(
+      bridge.menu.setActionEnabled(desktopMenuEventIds.exportSignoffPackage, true),
+    ).resolves.toBeUndefined()
+
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      1,
+      desktopApiIpcChannels.dialogSaveFile,
+      options,
+    )
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      2,
+      desktopApiIpcChannels.menuSetActionEnabled,
+      desktopMenuEventIds.exportSignoffPackage,
+      true,
+    )
   })
 
   it('subscribes and unsubscribes with shared event channel constants', async () => {
     const bridge = await loadDesktopBridge()
     const listener = vi.fn()
 
-    const unsubscribe = bridge.cli.onEvent(listener)
+    const unsubscribe = bridge.ecc.events.onEvent(listener)
     const eventListener = ipcRenderer.on.mock.calls[0]?.[1]
-    eventListener?.({}, { cmd: 'help', type: 'started' })
+    eventListener?.({}, { type: 'runtime.ready' })
     unsubscribe()
 
     expect(ipcRenderer.on).toHaveBeenCalledWith(
-      desktopApiEventChannels.cliEvent,
+      desktopApiEventChannels.eccEvent,
       expect.any(Function),
     )
-    expect(listener).toHaveBeenCalledWith({ cmd: 'help', type: 'started' })
+    expect(listener).toHaveBeenCalledWith({ type: 'runtime.ready' })
     expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
-      desktopApiEventChannels.cliEvent,
+      desktopApiEventChannels.eccEvent,
       eventListener,
     )
   })

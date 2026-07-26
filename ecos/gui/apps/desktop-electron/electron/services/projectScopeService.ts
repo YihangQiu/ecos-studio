@@ -1,9 +1,10 @@
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, win32 } from 'node:path'
 import type { PdkDetectedFiles, ScannedPdkDirectory } from '@ecos-studio/shared'
+import { requireWindowScopeId } from './windowScopeContext'
 
 const REQUIRED_PROJECT_FILES = ['flow.json', 'parameters.json']
-const TOP_LEVEL_ENTRY_LIMIT = 20
+const PDK_RESOURCE_FILE_EXTENSIONS = ['.lef', '.lib', '.liberty']
 
 async function canonicalizeExistingPath(path: string): Promise<string> {
   return await realpath(path)
@@ -71,22 +72,42 @@ async function canonicalizePotentialPathWithinRoot(
 }
 
 async function scanTopLevelEntries(path: string): Promise<PdkDetectedFiles> {
-  const entries = await readdir(path, { withFileTypes: true })
-  const directories = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort()
-    .slice(0, TOP_LEVEL_ENTRY_LIMIT)
-  const files = entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .sort()
-    .slice(0, TOP_LEVEL_ENTRY_LIMIT)
+  const directories: string[] = []
+  const files: string[] = []
+
+  async function walk(currentPath: string, relativeDirectory = ''): Promise<void> {
+    const entries = await readdir(currentPath, { withFileTypes: true })
+    entries.sort((left, right) => left.name.localeCompare(right.name))
+
+    for (const entry of entries) {
+      const relativePath = relativeDirectory
+        ? `${relativeDirectory}/${entry.name}`
+        : entry.name
+      const entryPath = join(currentPath, entry.name)
+
+      if (entry.isDirectory()) {
+        directories.push(relativePath)
+        await walk(entryPath, relativePath)
+        continue
+      }
+
+      if (entry.isFile() && isPdkResourceFile(entry.name)) {
+        files.push(relativePath)
+      }
+    }
+  }
+
+  await walk(path)
 
   return {
-    directories,
-    files,
+    directories: directories.sort((left, right) => left.localeCompare(right)),
+    files: files.sort((left, right) => left.localeCompare(right)),
   }
+}
+
+function isPdkResourceFile(path: string): boolean {
+  const lower = path.toLowerCase()
+  return PDK_RESOURCE_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension))
 }
 
 async function isProjectDirectoryCandidate(path: string): Promise<boolean> {
@@ -124,37 +145,48 @@ function getPathLeafName(path: string): string | null {
 }
 
 export class ProjectScopeService {
-  private activeProjectRoot: string | null = null
+  private readonly rootsByWindowId = new Map<number, string>()
+
+  async resolveProjectRoot(path: string): Promise<string> {
+    return await canonicalizeExistingDirectory(path)
+  }
 
   async getProjectRoot(): Promise<string> {
-    if (!this.activeProjectRoot) {
+    const root = this.rootsByWindowId.get(requireWindowScopeId())
+    if (!root) {
       throw new Error('Project root is not registered')
     }
 
-    return this.activeProjectRoot
+    return root
   }
 
   async registerProjectRoot(path: string): Promise<string> {
-    const canonicalPath = await canonicalizeExistingDirectory(path)
-    this.activeProjectRoot = canonicalPath
+    const windowId = requireWindowScopeId()
+    const canonicalPath = await this.resolveProjectRoot(path)
+    this.rootsByWindowId.set(windowId, canonicalPath)
     return canonicalPath
   }
 
   async clearProjectRoot(): Promise<void> {
-    this.activeProjectRoot = null
+    this.rootsByWindowId.delete(requireWindowScopeId())
+  }
+
+  clearWindow(windowId: number): void {
+    this.rootsByWindowId.delete(windowId)
   }
 
   async requestProjectPathAccess(path: string): Promise<string> {
-    if (!this.activeProjectRoot) {
+    const activeProjectRoot = this.rootsByWindowId.get(requireWindowScopeId())
+    if (!activeProjectRoot) {
       throw new Error('Project root is not registered')
     }
 
     const canonicalPath = await canonicalizePotentialPathWithinRoot(
       path,
-      this.activeProjectRoot,
+      activeProjectRoot,
     )
 
-    if (!isWithinRoot(canonicalPath, this.activeProjectRoot)) {
+    if (!isWithinRoot(canonicalPath, activeProjectRoot)) {
       throw new Error(
         `Refusing to grant access outside current project root: ${canonicalPath}`,
       )

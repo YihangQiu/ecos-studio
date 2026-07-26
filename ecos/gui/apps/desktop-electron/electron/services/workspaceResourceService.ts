@@ -387,9 +387,13 @@ export class WorkspaceResourceService {
     switch (id) {
       case 'layout':
         return stepInfo({
+          db: step.resources.output.db?.path,
+          def: step.resources.output.def?.path,
+          gds: step.resources.output.gds?.path,
           image: step.resources.output.image?.path,
           json: step.resources.output.json?.path,
           viewJson: step.resources.output.viewJson?.path,
+          geometryManifest: step.resources.output.geometryManifest?.path,
         })
       case 'views':
         return stepInfo({
@@ -461,9 +465,10 @@ export class WorkspaceResourceService {
     switch (id) {
       case 'layout':
         return existingResourceRefs([
+          step.resources.output.def,
+          step.resources.output.gds,
           step.resources.output.image,
-          step.resources.output.json,
-          step.resources.output.viewJson,
+          step.resources.output.db,
         ])
       case 'views':
         return existingResourceRefs([
@@ -562,6 +567,11 @@ function addEccLikeResources(
     join(directory, 'output', `${design}_${stepName}_view`),
     'view-json',
   )
+  resources.output.geometry = createFile(join(directory, 'output', 'geometry'), 'output')
+  resources.output.geometryManifest = createFile(
+    join(directory, 'output', 'geometry', 'geometry.manifest'),
+    'output',
+  )
   resources.output.lef = createFile(
     join(directory, 'output', `${design}_${stepName}.lef`),
     'output',
@@ -615,7 +625,7 @@ function addEccLikeResources(
     'script',
   )
   resources.analysis.metrics = createFile(
-    join(directory, 'analysis', `${stepName}_metrics.json`),
+    join(directory, 'analysis', 'qor_metrics.json'),
     'metrics',
   )
   resources.analysis.statis_csv = createFile(
@@ -681,7 +691,7 @@ function addYosysResources(
     'script',
   )
   resources.analysis.metrics = createFile(
-    join(directory, 'analysis', `${stepName}_metrics.json`),
+    join(directory, 'analysis', 'qor_metrics.json'),
     'metrics',
   )
   resources.subflow.path = createFile(join(directory, 'subflow.json'), 'subflow')

@@ -1,7 +1,5 @@
-import type { DesktopCliCommandEvent } from '@ecos-studio/shared'
+import type { EccRuntimeEvent } from '@ecos-studio/shared'
 import { getOptionalDesktopApi } from '@/platform/desktop'
-
-const runtimeNotifyCommandNames = new Set(['run_step', 'rtl2gds'])
 
 export type RuntimeNotifyType =
   | 'data_ready'
@@ -43,11 +41,71 @@ export type RuntimeEventClientState =
   | 'connected'
   | 'error'
 
-function normalizeWorkspaceId(value: string): string {
-  const normalized = value.trim().replace(/\\/g, '/')
-  return normalized.length > 1 && normalized.endsWith('/')
-    ? normalized.slice(0, -1)
-    : normalized
+function methodToCommand(method: string | undefined): string | undefined {
+  if (method === 'flow.run') return 'rtl2gds'
+  if (method === 'flow.run_step') return 'run_step'
+  return method
+}
+
+function isFlowMethod(method: string | undefined): boolean {
+  return method === 'flow.run' || method === 'flow.run_step'
+}
+
+function eventMatchesWorkspace(event: EccRuntimeEvent, workspaceId: string): boolean {
+  if (!('workspaceHandle' in event) || !event.workspaceHandle) return true
+  return event.workspaceHandle === workspaceId
+}
+
+function notifyTypeFromEvent(event: EccRuntimeEvent): RuntimeNotifyType | null {
+  if (event.type === 'runtime.exited') {
+    return event.reason === 'unexpected' ? 'error' : null
+  }
+  if (event.type === 'operation.failed')
+    return isFlowMethod(event.method) ? 'error' : null
+  if (event.type !== 'operation.completed' && event.type !== 'operation.started') {
+    return null
+  }
+  if (!isFlowMethod(event.method)) return null
+
+  if (event.type === 'operation.started') {
+    return event.method === 'flow.run_step' ? 'step_start' : 'message'
+  }
+  return event.method === 'flow.run' ? 'task_complete' : 'step_complete'
+}
+
+function responseFromEvent(event: EccRuntimeEvent): RuntimeResponseType {
+  if (event.type === 'operation.failed' || event.type === 'runtime.exited') {
+    return 'error'
+  }
+  return 'success'
+}
+
+function responseFromEccEvent(event: EccRuntimeEvent): RuntimeEventResponse | null {
+  const notifyType = notifyTypeFromEvent(event)
+  if (!notifyType) return null
+
+  const method = 'method' in event ? event.method : 'runtime.exited'
+  const command = methodToCommand(method)
+  const message =
+    'message' in event && typeof event.message === 'string' ? [event.message] : []
+  const data: RuntimeEventResponse['data'] = {
+    cmd: command,
+    directory: 'workspaceDirectory' in event ? event.workspaceDirectory : undefined,
+    jobId: 'operationId' in event ? event.operationId : undefined,
+    logFile: 'logFile' in event ? event.logFile : undefined,
+    method,
+    rerun: 'rerun' in event ? event.rerun : undefined,
+    timestamp: Date.now(),
+    type: notifyType,
+    workspaceId: 'workspaceHandle' in event ? event.workspaceHandle : undefined,
+  }
+
+  return {
+    cmd: 'notify',
+    data,
+    message,
+    response: responseFromEvent(event),
+  }
 }
 
 export function createRuntimeEventClient(
@@ -55,9 +113,9 @@ export function createRuntimeEventClient(
   config: RuntimeEventClientConfig = {},
 ) {
   void config
+  void workspaceId
 
-  const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId)
-  let unsubscribeCliEvents: (() => void) | null = null
+  let unsubscribeEvents: (() => void) | null = null
   let state: RuntimeEventClientState = 'disconnected'
   const handlers = new Map<RuntimeNotifyType, RuntimeEventHandler[]>()
   const allHandlers: RuntimeEventHandler[] = []
@@ -91,126 +149,36 @@ export function createRuntimeEventClient(
     }
   }
 
-  function responseFromCliEvent(
-    event: DesktopCliCommandEvent,
-  ): RuntimeEventResponse | null {
-    if (!runtimeNotifyCommandNames.has(event.cmd)) {
-      return null
-    }
-
-    if (event.type === 'queued' || event.type === 'stdout' || event.type === 'stderr') {
-      return null
-    }
-
-    const eventWorkspaceId =
-      typeof event.workspaceId === 'string' ? event.workspaceId : undefined
-    const eventDirectory =
-      typeof event.directory === 'string' ? event.directory : undefined
-    const metadataWorkspace = eventWorkspaceId ?? eventDirectory
-    if (
-      metadataWorkspace &&
-      normalizeWorkspaceId(metadataWorkspace) !== normalizedWorkspaceId
-    ) {
-      return null
-    }
-
-    const result = event.result
-    const message = result?.message?.length
-      ? result.message
-      : event.text
-        ? [event.text]
-        : []
-    const step = typeof result?.data.step === 'string' ? result.data.step : undefined
-    const id = typeof result?.data.id === 'string' ? result.data.id : undefined
-    const data: Omit<RuntimeEventResponse['data'], 'type'> & {
-      type?: RuntimeNotifyType
-    } = {
-      cmd: event.cmd,
-      jobId: event.jobId,
-      timestamp: Date.now(),
-    }
-
-    if (eventDirectory) data.directory = eventDirectory
-    if (eventWorkspaceId) data.workspaceId = eventWorkspaceId
-    if (id) data.id = id
-    if (step) data.step = step
-    if (event.stream) data.stream = event.stream
-    for (const [key, value] of Object.entries(event.data ?? {})) {
-      if (!(key in data)) {
-        data[key] = value
-      }
-    }
-    for (const [key, value] of Object.entries(result?.data ?? {})) {
-      if (!(key in data)) {
-        data[key] = value
-      }
-    }
-    if (result?.data.state) data.state = result.data.state
-    if (result?.data.info) data.info = result.data.info
-    if (result?.data.path) data.path = result.data.path
-
-    switch (event.type) {
-      case 'started':
-        data.type = event.cmd === 'run_step' ? 'step_start' : 'message'
-        break
-      case 'completed':
-        data.type = event.cmd === 'rtl2gds' ? 'task_complete' : 'step_complete'
-        break
-      case 'failed':
-        data.type = 'error'
-        break
-      case 'cancelled':
-        data.type = 'cancelled'
-        break
-    }
-
-    if (!data.type) {
-      return null
-    }
-
-    return {
-      cmd: 'notify',
-      data: data as RuntimeEventResponse['data'],
-      message,
-      response:
-        result?.response ??
-        (event.type === 'failed'
-          ? 'error'
-          : event.type === 'cancelled'
-            ? 'cancelled'
-            : 'success'),
-    }
-  }
-
   function connect() {
     close()
 
     setState('connecting')
     const desktopApi = getOptionalDesktopApi()
-    if (!desktopApi?.cli) {
+    if (!desktopApi?.ecc) {
       setState('error')
-      console.warn(`CLI runtime event stream unavailable for workspace: ${workspaceId}`)
+      console.warn(`ECC runtime event stream unavailable for workspace: ${workspaceId}`)
       return
     }
 
-    unsubscribeCliEvents = desktopApi.cli.onEvent((event) => {
-      const response = responseFromCliEvent(event)
+    unsubscribeEvents = desktopApi.ecc.events.onEvent((event) => {
+      if (!eventMatchesWorkspace(event, workspaceId)) return
+      const response = responseFromEccEvent(event)
       if (response) {
         handleNotification(response)
       }
     })
     setState('connected')
-    console.log(`CLI runtime event stream connected for workspace: ${workspaceId}`)
+    console.log(`ECC runtime event stream connected for workspace: ${workspaceId}`)
   }
 
   function close() {
-    if (unsubscribeCliEvents) {
-      unsubscribeCliEvents()
-      unsubscribeCliEvents = null
+    if (unsubscribeEvents) {
+      unsubscribeEvents()
+      unsubscribeEvents = null
     }
 
     setState('disconnected')
-    console.log(`CLI runtime event stream disconnected from workspace: ${workspaceId}`)
+    console.log(`ECC runtime event stream disconnected from workspace: ${workspaceId}`)
   }
 
   function on(type: RuntimeNotifyType, handler: RuntimeEventHandler) {
@@ -280,23 +248,9 @@ export function createRuntimeEventClient(
         callback(message, success)
       })
     },
-    onError(callback: (step: string | undefined, message: string) => void) {
+    onError(callback: (error: string) => void) {
       on('error', (r) => {
-        const step = r.data?.step as string | undefined
-        const message = r.message?.[0] || 'Unknown error'
-        callback(step, message)
-      })
-    },
-    onMessage(callback: (message: string) => void) {
-      on('message', (r) => {
-        if (r.message?.[0]) {
-          callback(r.message[0])
-        }
-      })
-    },
-    onHeartbeat(callback: () => void) {
-      on('heartbeat', () => {
-        callback()
+        callback(r.message?.[0] || 'Unknown runtime error')
       })
     },
   }

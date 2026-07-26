@@ -247,7 +247,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
 
-const { currentProject, showToast, invalidateWorkspaceResources } = useWorkspace()
+const { currentProject, showToast, invalidateWorkspaceResources, workspaceSession } =
+  useWorkspace()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -400,7 +401,7 @@ async function browseRtlFiles() {
   const hdlFiles = picked.files.filter((path) => isHdlFilePath(path))
   if (hdlFiles.length === 0) {
     manualFilePickError.value =
-      'Please select RTL design files only (.v, .sv, .vhd, .vhdl).'
+      'Please select RTL design files only (.v, .sv, .vhd, .vhdl, or .gz-compressed HDL).'
     return
   }
 
@@ -494,7 +495,10 @@ async function handleClearRunResults() {
   try {
     const result = await resetFlowApi({
       cmd: CMDEnum.reset_flow,
-      data: { directory: projectPath },
+      data: {
+        directory: projectPath,
+        workspaceHandle: workspaceSession.value.workspaceId,
+      },
     })
     if (result.response !== 'success') {
       throw new Error(result.message?.[0] || 'Failed to reset workspace run results.')

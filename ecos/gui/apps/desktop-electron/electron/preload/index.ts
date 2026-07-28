@@ -22,6 +22,7 @@ import type {
   DesktopShellDataEvent,
   DesktopShellExitEvent,
   DesktopShellSessionOptions,
+  DesktopAgentEvent,
   WorkspaceStepInfoRequest,
 } from '@ecos-studio/shared'
 
@@ -346,6 +347,20 @@ const desktopApi: DesktopApi = {
       syncConfig: (request) =>
         invokeDesktop(desktopApiIpcChannels.eccWorkspaceSyncConfig, request),
     },
+  },
+  agent: {
+    start: (request) => invokeDesktop(desktopApiIpcChannels.agentStart, request),
+    startSession: (request) =>
+      invokeDesktop(desktopApiIpcChannels.agentStartSession, request),
+    sendMessage: (request) =>
+      invokeDesktop(desktopApiIpcChannels.agentSendMessage, request),
+    onEvent: (listener) =>
+      subscribeToDesktopEvent(
+        desktopApiEventChannels.agentEvent,
+        (_event, payload: unknown) => {
+          listener(payload as DesktopAgentEvent)
+        },
+      ),
   },
   shell: {
     createSession: (options: DesktopShellSessionOptions) =>

@@ -97,6 +97,8 @@ export type {
   DesktopAgentEvent,
   DesktopAgentContractField,
   DesktopAgentExecutionContract,
+  DesktopAgentWorkspaceSetupContract,
+  DesktopAgentWorkspaceSetupParameters,
   DesktopAgentEventType,
   DesktopAgentListSessionsRequest,
   DesktopAgentListSessionsResponse,

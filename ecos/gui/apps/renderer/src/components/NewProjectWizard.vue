@@ -1270,6 +1270,48 @@
                       </div>
                     </div>
                   </div>
+
+                  <div
+                    class="rounded-xl border border-(--border-color) bg-(--bg-primary)/65 p-4"
+                  >
+                    <h3 class="text-sm font-bold text-(--text-primary)">
+                      Placement Defaults
+                    </h3>
+                    <p class="mt-1 text-xs text-(--text-secondary)">
+                      Passed to the initial placement configuration when the workspace is
+                      created.
+                    </p>
+                    <div class="mt-4 grid gap-5 md:grid-cols-2">
+                      <div>
+                        <label
+                          class="mb-2 block text-sm font-semibold text-(--text-primary)"
+                          >Target Density</label
+                        >
+                        <input
+                          v-model.number="config.parameters.target_density"
+                          type="number"
+                          min="0.1"
+                          max="1"
+                          step="0.01"
+                          class="w-full rounded-lg border border-(--border-color) bg-(--bg-secondary)/35 px-3 py-2.5 text-sm text-(--text-primary) outline-none focus:border-(--accent-color)"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          class="mb-2 block text-sm font-semibold text-(--text-primary)"
+                          >Target Overflow</label
+                        >
+                        <input
+                          v-model.number="config.parameters.target_overflow"
+                          type="number"
+                          min="0.01"
+                          max="1"
+                          step="0.01"
+                          class="w-full rounded-lg border border-(--border-color) bg-(--bg-secondary)/35 px-3 py-2.5 text-sm text-(--text-primary) outline-none focus:border-(--accent-color)"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </Transition>
@@ -1363,6 +1405,7 @@ type WorkspaceWizardInitialConfig = Partial<WorkspaceConfig> & {
   managedWorkspaceRoot?: string
   deriveDirectoryFromDesign?: boolean
   lockWorkspaceDirectory?: boolean
+  suggestedWorkspaceName?: string
 }
 
 interface Props {
@@ -1620,6 +1663,8 @@ function createInitialConfig(
       die_height: 100,
       utilitization: 0.6,
       margin: 0,
+      target_density: 0.2,
+      target_overflow: 0.1,
       ...source_config?.parameters,
       ...initialConfig?.parameters,
     },
@@ -1680,7 +1725,10 @@ function initialWorkspaceName(initialConfig?: WorkspaceWizardInitialConfig) {
   if (initialConfig?.directory) {
     return getFileName(initialConfig.directory)
   }
-  return String(initialConfig?.parameters?.design ?? '').trim()
+  return (
+    initialConfig?.suggestedWorkspaceName ??
+    String(initialConfig?.parameters?.design ?? '').trim()
+  )
 }
 
 function defaultWorkspaceName() {
@@ -2830,6 +2878,14 @@ function specReady() {
     Number(params.max_fanout) > 0
 
   if (!hasCoreFields) return false
+  if (
+    Number(params.target_density) < 0.1 ||
+    Number(params.target_density) > 1 ||
+    Number(params.target_overflow) <= 0 ||
+    Number(params.target_overflow) > 1
+  ) {
+    return false
+  }
   if (dieAreaMode.value === 'width_height') {
     return Number(params.die_width) > 0 && Number(params.die_height) > 0
   }

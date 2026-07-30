@@ -1,7 +1,7 @@
 <template>
   <div class="workspace-view">
     <!-- 主内容区域 -->
-    <main class="workspace-main">
+    <main :key="workspaceViewKey" class="workspace-main">
       <!-- 最左侧工具栏  -->
       <LeftSidebar />
       <router-view class="editor-view" />
@@ -12,12 +12,14 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import LeftSidebar from '../components/LeftSidebar.vue'
 // import RightSidebar from '../components/RightSidebar.vue'
 import { useWorkspace } from '../composables/useWorkspace'
 
-const { closeProject } = useWorkspace()
+const { closeProject, currentProject } = useWorkspace()
+const workspaceViewKey = computed(() => currentProject.value?.path ?? '')
 
 onBeforeRouteLeave(async () => {
   await closeProject()

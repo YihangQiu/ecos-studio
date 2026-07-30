@@ -65,6 +65,7 @@ export interface EccWorkspaceRuntimeOptions {
 
 export interface EccCandidateRerunRequest {
   candidateId: string
+  endStep: string
   executionScope: 'single_step' | 'full_flow'
   patch: Array<{ knob_id: string; value: unknown }>
   targetStep: string
@@ -484,6 +485,7 @@ export class EccWorkspaceRuntime {
           'candidate.rerun',
           {
             candidateId: request.candidateId,
+            endStep: request.endStep,
             executionScope: request.executionScope,
             patch: request.patch,
             targetStep: request.targetStep,

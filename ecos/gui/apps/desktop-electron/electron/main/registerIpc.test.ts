@@ -263,6 +263,7 @@ describe('registerIpc', () => {
         { sender: { id: 'web-contents' } },
         {
           design_id: 'gcd',
+          end_step: 'place',
           execution_scope: 'single_step',
           parameter_patch: [],
           requires_gui_review: true,
@@ -320,6 +321,7 @@ describe('registerIpc', () => {
       type: 'workspace_rerun',
       workspaceRerun: {
         design_id: 'gcd',
+        end_step: 'place',
         execution_scope: 'single_step',
         parameter_patch: [],
         requires_gui_review: true,
@@ -379,6 +381,7 @@ describe('registerIpc', () => {
     const session = { providerId: 'flow_agent', sessionId: 'gui-session-1' }
     const contract = {
       design_id: 'gcd',
+      end_step: 'place',
       execution_scope: 'single_step' as const,
       parameter_patch: [],
       requires_gui_review: true as const,
@@ -443,6 +446,7 @@ describe('registerIpc', () => {
     const session = { providerId: 'flow_agent', sessionId: 'gui-session-1' }
     const contract = {
       design_id: 'gcd',
+      end_step: 'place',
       execution_scope: 'full_flow' as const,
       parameter_patch: [{ knob_id: 'place.target_density', value: 0.55 }],
       requires_gui_review: true as const,

@@ -311,7 +311,7 @@ describe('registerIpc', () => {
       once: vi.fn(),
       send: vi.fn(),
     }
-    const session = { providerId: 'flow_agent', sessionId: 'gui-session-1' }
+    const session = { providerId: 'ecos_agent', sessionId: 'gui-session-1' }
     await handlers.get(desktopApiIpcChannels.agentStartSession)?.(
       { sender: owner },
       session,
@@ -378,7 +378,7 @@ describe('registerIpc', () => {
       once: vi.fn(),
       send: vi.fn(),
     }
-    const session = { providerId: 'flow_agent', sessionId: 'gui-session-1' }
+    const session = { providerId: 'ecos_agent', sessionId: 'gui-session-1' }
     const contract = {
       design_id: 'gcd',
       end_step: 'place',
@@ -443,7 +443,7 @@ describe('registerIpc', () => {
       once: vi.fn(),
       send: vi.fn(),
     }
-    const session = { providerId: 'flow_agent', sessionId: 'gui-session-1' }
+    const session = { providerId: 'ecos_agent', sessionId: 'gui-session-1' }
     const contract = {
       design_id: 'gcd',
       end_step: 'place',
@@ -547,7 +547,7 @@ describe('registerIpc', () => {
     }
     const event = { sender }
     const session = {
-      providerId: 'flow_agent',
+      providerId: 'ecos_agent',
       sessionId: 'gui-session-1',
     }
     await expect(
